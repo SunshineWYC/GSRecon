@@ -4,6 +4,7 @@ import json
 import time
 import torch
 import shutil
+import itertools
 import numpy as np
 from tqdm import tqdm
 from munch import munchify
@@ -52,28 +53,6 @@ def optimization(train_dataset, eval_dataset, renderer, model_params, training_p
             drop_last=False,
         )
     data_iter = infinite_dataloader(dataloader)
-    
-    # eval dataset definition
-    if training_params.get("preload", False):
-        eval_dataloader = torch.utils.data.DataLoader(
-            dataset=eval_dataset,
-            batch_size=1,
-            shuffle=False,
-            num_workers=0,
-            pin_memory=True,
-            drop_last=False,
-        )
-    else:
-        eval_dataloader = torch.utils.data.DataLoader(
-            dataset=eval_dataset,
-            batch_size=1,
-            shuffle=True,
-            num_workers=8,
-            pin_memory=True,
-            persistent_workers=True,
-            prefetch_factor=8,
-            drop_last=False,
-        )
 
     # gaussian model initialization
     gaussians = GaussianModel(sh_degree=model_params.sh_degree)
@@ -138,7 +117,7 @@ def optimization(train_dataset, eval_dataset, renderer, model_params, training_p
                         0.005,
                         scene_extent,
                         size_threshold,
-                        training_params.max_num_gaussians,
+                        model_params.max_num_gaussians,
                     )
 
                 if iteration % training_params.opacity_reset_interval == 0:
@@ -166,7 +145,7 @@ def optimization(train_dataset, eval_dataset, renderer, model_params, training_p
                     logger.add_scalar("Metrics/eval_ssim", sum(ssim_scores.values()) / len(ssim_scores), iteration)
                     logger.add_scalar("Metrics/eval_lpips", sum(lpips_scores.values()) / len(lpips_scores), iteration)
 
-        pbar.set_postfix(loss=f"{loss.item():.4f}")
+        pbar.set_postfix(loss=f"{loss.item():.4f}", num_gs=f"{gaussians.get_xyz.shape[0]}")
 
     # save gaussian model
     gaussians.save_ply(os.path.join(gaussian_output_dir, "iteration_{}.ply".format(iteration)))
