@@ -48,7 +48,7 @@ def ssim_mask(img1, img2, mask, window_size=11):
 
 
 @torch.no_grad()
-def evaluate_gaussian_model(gaussians, dataset, renderer, lpips_flag=True, device="cuda:0"):
+def evaluate_gaussian_photometric(gaussians, dataset, renderer, lpips_flag=True, device="cuda:0"):
     dataloader = torch.utils.data.DataLoader(dataset, batch_size=1, shuffle=False, num_workers=8, pin_memory=True, drop_last=False)
     dataloader_iter = iter(dataloader)
 
@@ -58,8 +58,10 @@ def evaluate_gaussian_model(gaussians, dataset, renderer, lpips_flag=True, devic
         lpips_model = LPIPS(net_type="vgg", version="0.1").to(device)
         lpips_model.eval()
 
-    for idx in range(len(dataset)):
+    for idx in tqdm(range(len(dataset)), desc="Evaluating...", unit="view"):
         view_id, view_data = next(dataloader_iter)
+        view_id = view_id.item() if isinstance(view_id, torch.Tensor) else view_id
+
         extrinsic = view_data["extrinsic"].to(device, non_blocking=True)
         intrinsic = view_data["intrinsic"].to(device, non_blocking=True)
         image_height, image_width = view_data["height"], view_data["width"]
@@ -72,6 +74,7 @@ def evaluate_gaussian_model(gaussians, dataset, renderer, lpips_flag=True, devic
             sh_degree=gaussians.active_sh_degree,
             image_height=image_height,
             image_width=image_width,
+            device=device,
         )
 
         psnr_score = psnr(image_rendered, image_gt)

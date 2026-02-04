@@ -6,7 +6,7 @@ scene:
 
 training_params:
   iterations: 30000
-  position_lr_init: 0.00016
+  position_lr_init: 0.00008
   position_lr_final: 0.0000016
   position_lr_delay_mult: 0.01
   position_lr_max_steps: 30000
@@ -27,6 +27,7 @@ training_params:
   log_interval: 100
   image_log_interval: 500
   eval: True
+  eval_split_interval: 8
   eval_interval: 3000
 
 renderer_params:

@@ -1,10 +1,5 @@
 import os
-import sys
-from pathlib import Path
-repo_root = Path(__file__).resolve().parents[1]
-if str(repo_root) not in sys.path:
-    sys.path.insert(0, str(repo_root))
-
+import cv2
 import torch
 import numpy as np
 from datasets.sensors import PerspectiveViewInfo
@@ -15,7 +10,6 @@ from datasets.colmap_reader import (
     read_intrinsics_text,
     qvec2rotmat
 )
-from PIL import Image
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 
@@ -98,13 +92,13 @@ class COLMAPSceneInfo:
 
 
 class COLMAPDataset(torch.utils.data.Dataset):
-    def __init__(self, views_info, image_scale=1.0, scene_scale=1.0, preload=False, split=None):
+    def __init__(self, views_info, image_scale=1.0, scene_scale=1.0, preload=False, split=None, eval_split_interval=8):
         super(COLMAPDataset, self).__init__()
         self.views_info = views_info
         self.image_scale = image_scale
         self.scene_scale = scene_scale
 
-        self.views_info_list, self.view_ids, self.num_views = self._split_views(split, split_interval=8)
+        self.views_info_list, self.view_ids, self.num_views = self._split_views(split, split_interval=eval_split_interval)
 
         self.preload = preload
         if preload:
@@ -113,7 +107,7 @@ class COLMAPDataset(torch.utils.data.Dataset):
     def __len__(self):
         return self.num_views
 
-    def _split_views(self, split, split_interval = 8):
+    def _split_views(self, split, split_interval=8):
         if split == "train":
             view_ids = [view_id for idx, view_id in enumerate(self.views_info.keys()) if idx % split_interval != 0]
             views_info_list = [view_info for idx, view_info in enumerate(self.views_info.values()) if idx % split_interval != 0]
@@ -127,20 +121,33 @@ class COLMAPDataset(torch.utils.data.Dataset):
         return views_info_list, view_ids, len(views_info_list)
 
     def _read_image(self, image_filepath):
-        image = Image.open(image_filepath)
-        new_width = int(image.width * self.image_scale)
-        new_height = int(image.height * self.image_scale)
-        image = image.resize((new_width, new_height))
-        np_image = np.array(image, dtype=np.float32) / 255.0
+        image = cv2.imread(image_filepath, cv2.IMREAD_COLOR)
+        if image is None:
+            raise RuntimeError(f"Failed to read image: {image_filepath}")
+        image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+        height, width = image.shape[:2]
+        new_width = int(width * self.image_scale)
+        new_height = int(height * self.image_scale)
+        if new_width <= 0 or new_height <= 0:
+            raise ValueError(f"Invalid scaled image size ({new_width}, {new_height}) for scale {self.image_scale}")
+        if new_width != width or new_height != height:
+            interp = cv2.INTER_AREA if self.image_scale < 1.0 else cv2.INTER_LINEAR
+            image = cv2.resize(image, (new_width, new_height), interpolation=interp)
+        np_image = image.astype(np.float32) / 255.0
         return np_image[:, :, :3], new_height, new_width
 
     def _read_mask(self, mask_filepath):
-        mask = Image.open(mask_filepath).convert('L')
-        new_width = int(mask.width * self.image_scale)
-        new_height = int(mask.height * self.image_scale)
-        mask = mask.resize((new_width, new_height))
-        np_mask = np.array(mask, dtype=np.uint8)
-        np_mask = (np_mask > 128) + 0.0 # binary mask, 1.0 for valid region, 0.0 for mask region
+        mask = cv2.imread(mask_filepath, cv2.IMREAD_GRAYSCALE)
+        if mask is None:
+            raise RuntimeError(f"Failed to read mask: {mask_filepath}")
+        height, width = mask.shape[:2]
+        new_width = int(width * self.image_scale)
+        new_height = int(height * self.image_scale)
+        if new_width <= 0 or new_height <= 0:
+            raise ValueError(f"Invalid scaled mask size ({new_width}, {new_height}) for scale {self.image_scale}")
+        if new_width != width or new_height != height:
+            mask = cv2.resize(mask, (new_width, new_height), interpolation=cv2.INTER_NEAREST)
+        np_mask = (mask > 128).astype(np.float32)  # binary mask, 1.0 valid, 0.0 masked
         return np_mask
 
     def _load_single_view_data(self, view_info):

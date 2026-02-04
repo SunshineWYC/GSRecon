@@ -12,7 +12,7 @@ from argparse import ArgumentParser
 from utils.config_utils import load_config
 from renderer import create_renderer
 from utils.utils import infinite_dataloader, load_pcdfile
-from utils.eval_utils import evaluate_gaussian_model
+from utils.eval_utils import evaluate_gaussian_photometric
 from torch.utils.tensorboard import SummaryWriter
 from gaussian_splatting.gaussian_model import GaussianModel
 from gaussian_splatting.utils.loss_utils import l1_loss
@@ -20,7 +20,8 @@ from fused_ssim import fused_ssim as fast_ssim
 from datasets.colmap_loader import COLMAPSceneInfo, COLMAPDataset
 
 
-def optimization(train_dataset, eval_dataset, renderer, model_params, training_params, device, output_dirpath, pcd_filepath):
+def optimize(train_dataset, eval_dataset, renderer, model_params, training_params, device, output_dirpath, pcd_filepath):
+    t0 = time.perf_counter()
     # output dirpath pre setting
     log_dir = os.path.join(output_dirpath, "logs")
     os.makedirs(log_dir, exist_ok=True)
@@ -46,10 +47,9 @@ def optimization(train_dataset, eval_dataset, renderer, model_params, training_p
             dataset=train_dataset,
             batch_size=1,
             shuffle=True,
-            num_workers=8,
+            num_workers=4,
             pin_memory=True,
             persistent_workers=True,
-            prefetch_factor=8,
             drop_last=False,
         )
     data_iter = infinite_dataloader(dataloader)
@@ -62,6 +62,7 @@ def optimization(train_dataset, eval_dataset, renderer, model_params, training_p
     gaussians.training_setup(training_params)
 
     # optimization loop
+    t1 = time.perf_counter()
     print("Start optimization, initial gaussian point number: {}".format(gaussians.get_xyz.shape[0]))
     iteration = 0
 
@@ -86,6 +87,7 @@ def optimization(train_dataset, eval_dataset, renderer, model_params, training_p
             sh_degree=gaussians.active_sh_degree,
             image_height=image_height,
             image_width=image_width,
+            device=device
         )
 
         # calculate loss
@@ -140,7 +142,7 @@ def optimization(train_dataset, eval_dataset, renderer, model_params, training_p
             # evaluation on dataset and metrics logging
             if training_params.get("eval", False):
                 if iteration == 1 or iteration % eval_interval == 0:
-                    psnr_scores, ssim_scores, lpips_scores = evaluate_gaussian_model(gaussians, eval_dataset, renderer, lpips_flag=True, device=device)
+                    psnr_scores, ssim_scores, lpips_scores = evaluate_gaussian_photometric(gaussians, eval_dataset, renderer, lpips_flag=True, device=device)
                     logger.add_scalar("Metrics/eval_psnr", sum(psnr_scores.values()) / len(psnr_scores), iteration)
                     logger.add_scalar("Metrics/eval_ssim", sum(ssim_scores.values()) / len(ssim_scores), iteration)
                     logger.add_scalar("Metrics/eval_lpips", sum(lpips_scores.values()) / len(lpips_scores), iteration)
@@ -148,18 +150,37 @@ def optimization(train_dataset, eval_dataset, renderer, model_params, training_p
         pbar.set_postfix(loss=f"{loss.item():.4f}", num_gs=f"{gaussians.get_xyz.shape[0]}")
 
     # save gaussian model
+    t2 = time.perf_counter()
     gaussians.save_ply(os.path.join(gaussian_output_dir, "iteration_{}.ply".format(iteration)))
     print("End optimization, final gaussian point number : {}.".format(gaussians.get_xyz.shape[0]))
 
     # final evaluation
-    psnr_scores, ssim_scores, lpips_scores = evaluate_gaussian_model(gaussians, train_dataset, renderer, lpips_flag=True, device=device)
+    t3 = time.perf_counter()
+    timing = {
+        "data_load": t1 - t0,
+        "optimization": t2 - t1,
+        "save_model": t3 - t2,
+        "total": t3 - t0,
+    }
+    with open(os.path.join(log_dir, "timing.json"), "w", encoding="utf-8") as f:
+        json.dump(timing, f, indent=2)
+    print(
+        "Timing: data_load={:.3f}s, optimization={:.3f}s, save_model={:.3f}s, total={:.3f}s".format(
+            timing["data_load"],
+            timing["optimization"],
+            timing["save_model"],
+            timing["total"],
+        )
+    )
+    
+    psnr_scores, ssim_scores, lpips_scores = evaluate_gaussian_photometric(gaussians, train_dataset, renderer, lpips_flag=True, device=device)
     avg_psnr = sum(psnr_scores.values()) / len(psnr_scores)
     avg_ssim = sum(ssim_scores.values()) / len(ssim_scores)
     avg_lpips = sum(lpips_scores.values()) / len(lpips_scores)
     print("Final Evaluation on Train Views - PSNR: {:.4f}, SSIM: {:.4f}, LPIPS: {:.4f}".format(avg_psnr, avg_ssim, avg_lpips))
 
     if training_params.get("eval", False):
-        psnr_scores, ssim_scores, lpips_scores = evaluate_gaussian_model(gaussians, eval_dataset, renderer, lpips_flag=True, device=device)
+        psnr_scores, ssim_scores, lpips_scores = evaluate_gaussian_photometric(gaussians, eval_dataset, renderer, lpips_flag=True, device=device)
         avg_psnr = sum(psnr_scores.values()) / len(psnr_scores)
         avg_ssim = sum(ssim_scores.values()) / len(ssim_scores)
         avg_lpips = sum(lpips_scores.values()) / len(lpips_scores)
@@ -194,6 +215,7 @@ if __name__ == "__main__":
         scene_scale=model_params.get("scene_scale", 1.0),
         preload=training_params.get("preload", False),
         split="train",
+        eval_split_interval=training_params.get("eval_split_interval", 8),
     )
     if training_params.get("eval", False):
         eval_dataset = COLMAPDataset(
@@ -202,11 +224,12 @@ if __name__ == "__main__":
             scene_scale=model_params.get("scene_scale", 1.0),
             preload=training_params.get("preload", False),
             split="val",
+            eval_split_interval=training_params.get("eval_split_interval", 8),
         )
     else:
         eval_dataset = None
 
-    optimization(
+    optimize(
         train_dataset,
         eval_dataset,
         renderer=renderer,
