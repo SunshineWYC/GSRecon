@@ -26,7 +26,7 @@ training_params:
   log: False
   log_interval: 100
   image_log_interval: 500
-  eval: False
+  eval: True
   eval_interval: 3000
 
 renderer_params:

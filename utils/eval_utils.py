@@ -3,7 +3,7 @@ import torch.nn.functional as F
 import numpy as np
 from tqdm import tqdm
 from utils.image_utils import psnr
-from utils.lpipsPyTorch import lpips
+from utils.lpipsPyTorch.modules.lpips import LPIPS
 from gsplat.rendering import rasterization
 from gaussian_splatting.utils.loss_utils import create_window
 from fused_ssim import fused_ssim as fast_ssim
@@ -53,6 +53,10 @@ def evaluate_gaussian_model(gaussians, dataset, renderer, lpips_flag=True, devic
     dataloader_iter = iter(dataloader)
 
     psnr_scores, ssim_scores, lpips_scores = {}, {}, {}
+    lpips_model = None
+    if lpips_flag:
+        lpips_model = LPIPS(net_type="vgg", version="0.1").to(device)
+        lpips_model.eval()
 
     for idx in range(len(dataset)):
         view_id, view_data = next(dataloader_iter)
@@ -73,7 +77,7 @@ def evaluate_gaussian_model(gaussians, dataset, renderer, lpips_flag=True, devic
         psnr_score = psnr(image_rendered, image_gt)
         ssim_score = fast_ssim(image_rendered.unsqueeze(0), image_gt.unsqueeze(0))
         if lpips_flag:
-            lpips_score = lpips(image_rendered, image_gt, net_type='vgg')
+            lpips_score = lpips_model(image_rendered.unsqueeze(0), image_gt.unsqueeze(0))
         else:
             lpips_score = torch.tensor(0.0)
 

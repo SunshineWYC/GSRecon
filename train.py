@@ -55,7 +55,7 @@ def optimization(train_dataset, eval_dataset, renderer, model_params, training_p
     data_iter = infinite_dataloader(dataloader)
 
     # gaussian model initialization
-    gaussians = GaussianModel(sh_degree=model_params.sh_degree)
+    gaussians = GaussianModel(sh_degree=model_params.sh_degree, device=device)
     pcd = load_pcdfile(pcd_filepath, scene_scale=model_params.get("scene_scale", 1.0))
     scene_extent = 5.0
     gaussians.create_from_pcd(pcd, scene_extent=scene_extent)
@@ -216,6 +216,5 @@ if __name__ == "__main__":
         output_dirpath=output_root,
         pcd_filepath=pcd_filepath
     )
-
 
     print("Hello World!")
