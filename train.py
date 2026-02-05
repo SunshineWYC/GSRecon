@@ -15,9 +15,76 @@ from utils.utils import infinite_dataloader, load_pcdfile
 from utils.eval_utils import evaluate_gaussian_photometric
 from torch.utils.tensorboard import SummaryWriter
 from gaussian_splatting.gaussian_model import GaussianModel
+from gaussian_splatting.pose_optimization import CameraOptModule
 from gaussian_splatting.utils.loss_utils import l1_loss
 from fused_ssim import fused_ssim as fast_ssim
 from datasets.colmap_loader import COLMAPSceneInfo, COLMAPDataset
+from datasets.colmap_reader import (
+    read_extrinsics_binary,
+    read_intrinsics_binary,
+    read_extrinsics_text,
+    read_intrinsics_text,
+    rotmat2qvec,
+)
+
+
+def _read_colmap_model(scene_dirpath):
+    sparse_dir = os.path.join(scene_dirpath, "sparse/0")
+    try:
+        cameras_extrinsic_file = os.path.join(sparse_dir, "images.bin")
+        cameras_intrinsic_file = os.path.join(sparse_dir, "cameras.bin")
+        images = read_extrinsics_binary(cameras_extrinsic_file)
+        cameras = read_intrinsics_binary(cameras_intrinsic_file)
+    except Exception:
+        cameras_extrinsic_file = os.path.join(sparse_dir, "images.txt")
+        cameras_intrinsic_file = os.path.join(sparse_dir, "cameras.txt")
+        images = read_extrinsics_text(cameras_extrinsic_file)
+        cameras = read_intrinsics_text(cameras_intrinsic_file)
+    return images, cameras
+
+
+def _write_colmap_text(output_sparse_dir, images, cameras, refined_train_w2c):
+    os.makedirs(output_sparse_dir, exist_ok=True)
+
+    cameras_path = os.path.join(output_sparse_dir, "cameras.txt")
+    with open(cameras_path, "w", encoding="utf-8") as f:
+        f.write("# Camera list with one line of data per camera:\n")
+        f.write("#   CAMERA_ID, MODEL, WIDTH, HEIGHT, PARAMS[]\n")
+        for camera_id in sorted(cameras.keys()):
+            cam = cameras[camera_id]
+            params = " ".join(str(p) for p in cam.params)
+            f.write(f"{cam.id} {cam.model} {cam.width} {cam.height} {params}\n")
+
+    images_path = os.path.join(output_sparse_dir, "images.txt")
+    with open(images_path, "w", encoding="utf-8") as f:
+        f.write("# Image list with two lines of data per image:\n")
+        f.write("#   IMAGE_ID, QW, QX, QY, QZ, TX, TY, TZ, CAMERA_ID, NAME\n")
+        f.write("#   POINTS2D[] as (X, Y, POINT3D_ID)\n")
+        for image_id in sorted(images.keys()):
+            img = images[image_id]
+            if image_id in refined_train_w2c:
+                w2c = refined_train_w2c[image_id]
+                qvec = rotmat2qvec(w2c[:3, :3])
+                tvec = w2c[:3, 3]
+            else:
+                qvec = img.qvec
+                tvec = img.tvec
+            f.write(
+                f"{image_id} {qvec[0]} {qvec[1]} {qvec[2]} {qvec[3]} "
+                f"{tvec[0]} {tvec[1]} {tvec[2]} {img.camera_id} {img.name}\n"
+            )
+            if img.xys is not None and len(img.xys) > 0:
+                pts = []
+                for (x, y), pid in zip(img.xys, img.point3D_ids):
+                    pts.append(f"{x} {y} {pid}")
+                f.write(" ".join(pts) + "\n")
+            else:
+                f.write("\n")
+
+    points_path = os.path.join(output_sparse_dir, "points3D.txt")
+    with open(points_path, "w", encoding="utf-8") as f:
+        f.write("# 3D point list with one line of data per point:\n")
+        f.write("#   POINT3D_ID, X, Y, Z, R, G, B, ERROR, TRACK[] as (IMAGE_ID, POINT2D_IDX)\n")
 
 
 def optimize(train_dataset, eval_dataset, renderer, model_params, training_params, device, output_dirpath, pcd_filepath):
@@ -31,6 +98,13 @@ def optimize(train_dataset, eval_dataset, renderer, model_params, training_param
     # set up logger
     logger = SummaryWriter(log_dir=log_dir) if training_params.get("log", True) else None
     eval_interval = training_params.get("eval_interval", 1000)
+    pose_optimize = training_params.get("pose_optimize", False)
+    pose_params = training_params.get("pose_optim_params", {})
+    pose_refine = None
+    pose_optimizer = None
+    pose_scheduler = None
+    pose_start = int(pose_params.get("start_iter", 2000))
+    pose_end = int(pose_params.get("end_iter", 25000))
 
     # dataloader definition
     if training_params.get("preload", False):
@@ -61,6 +135,18 @@ def optimize(train_dataset, eval_dataset, renderer, model_params, training_param
     gaussians.create_from_pcd(pcd, scene_extent=scene_extent)
     gaussians.training_setup(training_params)
 
+    if pose_optimize:
+        train_view_ids = train_dataset.view_ids
+        pose_refine = CameraOptModule(train_view_ids).to(device)
+        pose_refine.zero_init()
+        pose_lr = float(pose_params.get("lr", 1e-5))
+        pose_reg = float(pose_params.get("reg", 1e-6))
+        pose_optimizer = torch.optim.Adam(pose_refine.parameters(), lr=pose_lr, weight_decay=pose_reg)
+        gamma_final_ratio = float(pose_params.get("gamma_final_ratio", 0.01))
+        pose_scheduler = torch.optim.lr_scheduler.ExponentialLR(
+            pose_optimizer, gamma=gamma_final_ratio ** (1.0 / training_params.iterations)
+        )
+
     # optimization loop
     t1 = time.perf_counter()
     print("Start optimization, initial gaussian point number: {}".format(gaussians.get_xyz.shape[0]))
@@ -76,6 +162,16 @@ def optimize(train_dataset, eval_dataset, renderer, model_params, training_param
         view_id, view_data = next(data_iter)
         
         extrinsic = view_data["extrinsic"].to(device, non_blocking=True)
+        if pose_refine is not None:
+            if isinstance(view_id, torch.Tensor):
+                view_ids_list = [int(view_id.reshape(-1)[0].item())]
+            elif isinstance(view_id, (list, tuple)):
+                view_ids_list = [int(v) for v in view_id]
+            else:
+                view_ids_list = [int(view_id)]
+            camtoworld = torch.linalg.inv(extrinsic)
+            camtoworld = pose_refine(camtoworld, view_ids_list)
+            extrinsic = torch.linalg.inv(camtoworld)
         intrinsic = view_data["intrinsic"].to(device, non_blocking=True)
         image_height, image_width = view_data["height"], view_data["width"]
         image_gt = view_data["image"][0].to(device, non_blocking=True)
@@ -101,6 +197,12 @@ def optimize(train_dataset, eval_dataset, renderer, model_params, training_param
         with torch.no_grad():
             gaussians.optimizer.step()
             gaussians.optimizer.zero_grad(set_to_none=True)
+
+            if pose_refine is not None:
+                if pose_start <= iteration <= pose_end:
+                    pose_optimizer.step()
+                    pose_scheduler.step()
+                pose_optimizer.zero_grad(set_to_none=True)
 
             # adaptive density control: densification and prune
             # accumulate densification stats
@@ -173,18 +275,21 @@ def optimize(train_dataset, eval_dataset, renderer, model_params, training_param
         )
     )
     
-    psnr_scores, ssim_scores, lpips_scores = evaluate_gaussian_photometric(gaussians, train_dataset, renderer, lpips_flag=True, device=device)
-    avg_psnr = sum(psnr_scores.values()) / len(psnr_scores)
-    avg_ssim = sum(ssim_scores.values()) / len(ssim_scores)
-    avg_lpips = sum(lpips_scores.values()) / len(lpips_scores)
-    print("Final Evaluation on Train Views - PSNR: {:.4f}, SSIM: {:.4f}, LPIPS: {:.4f}".format(avg_psnr, avg_ssim, avg_lpips))
+    refined_train_w2c = None
+    if pose_refine is not None:
+        refined_train_w2c = {}
+        scene_scale = float(model_params.get("scene_scale", 1.0))
+        with torch.no_grad():
+            for view_id, view_info in zip(train_dataset.view_ids, train_dataset.views_info_list):
+                w2c = torch.tensor(view_info.extrinsic, dtype=torch.float32, device=device).unsqueeze(0)
+                w2c[..., :3, 3] *= scene_scale
+                camtoworld = torch.linalg.inv(w2c)
+                camtoworld = pose_refine(camtoworld, [int(view_id)])
+                w2c_ref = torch.linalg.inv(camtoworld).squeeze(0)
+                w2c_ref[:3, 3] /= scene_scale
+                refined_train_w2c[int(view_id)] = w2c_ref.detach().cpu().numpy()
 
-    if training_params.get("eval", False):
-        psnr_scores, ssim_scores, lpips_scores = evaluate_gaussian_photometric(gaussians, eval_dataset, renderer, lpips_flag=True, device=device)
-        avg_psnr = sum(psnr_scores.values()) / len(psnr_scores)
-        avg_ssim = sum(ssim_scores.values()) / len(ssim_scores)
-        avg_lpips = sum(lpips_scores.values()) / len(lpips_scores)
-        print("Final Evaluation on Eval Views - PSNR: {:.4f}, SSIM: {:.4f}, LPIPS: {:.4f}".format(avg_psnr, avg_ssim, avg_lpips))
+    return refined_train_w2c
 
 
 if __name__ == "__main__":
@@ -229,7 +334,7 @@ if __name__ == "__main__":
     else:
         eval_dataset = None
 
-    optimize(
+    refined_train_w2c = optimize(
         train_dataset,
         eval_dataset,
         renderer=renderer,
@@ -239,5 +344,10 @@ if __name__ == "__main__":
         output_dirpath=output_root,
         pcd_filepath=pcd_filepath
     )
+
+    if training_params.get("pose_optimize", False) and refined_train_w2c:
+        images, cameras = _read_colmap_model(config["scene"]["data_path"])
+        output_sparse_dir = os.path.join(output_root, "pose_refined", "sparse", "0")
+        _write_colmap_text(output_sparse_dir, images, cameras, refined_train_w2c)
 
     print("Hello World!")

@@ -4,9 +4,11 @@ import re
 import sys
 from argparse import ArgumentParser
 
+import numpy as np
 import torch
 
 from datasets.colmap_loader import COLMAPSceneInfo, COLMAPDataset
+from datasets.colmap_reader import read_extrinsics_binary, read_extrinsics_text, qvec2rotmat
 from gaussian_splatting.gaussian_model import GaussianModel
 from renderer import create_renderer
 from utils.config_utils import load_config
@@ -58,11 +60,37 @@ def _build_payload(dataset, psnr_scores, ssim_scores, lpips_scores):
         )
 
     return {
+        "pose_source": None,
         "avg_psnr": _avg(psnr_scores.values()),
         "avg_ssim": _avg(ssim_scores.values()),
         "avg_lpips": _avg(lpips_scores.values()),
         "frames": frames,
     }
+
+def _try_load_refined_poses(exp_dir):
+    sparse_dir = os.path.join(exp_dir, "pose_refined", "sparse", "0")
+    bin_path = os.path.join(sparse_dir, "images.bin")
+    txt_path = os.path.join(sparse_dir, "images.txt")
+    if os.path.isfile(bin_path):
+        return read_extrinsics_binary(bin_path)
+    if os.path.isfile(txt_path):
+        return read_extrinsics_text(txt_path)
+    return None
+
+
+def _make_w2c_from_qt(qvec, tvec):
+    w2c = np.eye(4, dtype=np.float32)
+    w2c[:3, :3] = qvec2rotmat(qvec)
+    w2c[:3, 3] = np.array(tvec, dtype=np.float32)
+    return w2c
+
+
+def _split_view_ids(views_info_keys, split, eval_split_interval):
+    if split == "train":
+        return [view_id for idx, view_id in enumerate(views_info_keys) if idx % eval_split_interval != 0]
+    if split == "val":
+        return [view_id for idx, view_id in enumerate(views_info_keys) if idx % eval_split_interval == 0]
+    return list(views_info_keys)
 
 
 def evaluate_photometric(exp_dir, config, gaussians, device, splits):
@@ -88,6 +116,31 @@ def evaluate_photometric(exp_dir, config, gaussians, device, splits):
     metrics_dir = os.path.join(exp_dir, "metrics")
     os.makedirs(metrics_dir, exist_ok=True)
 
+    # if with pose refinement, using refined pose to 
+    pose_optimize = bool(training_params.get("pose_optimize", False))
+    train_pose_source = "original"
+    if pose_optimize and "train" in splits:
+        try:
+            refined_poses = _try_load_refined_poses(exp_dir)
+        except Exception as e:
+            refined_poses = None
+            print(f"Warning: failed to load refined poses: {e}. Using original poses for train.")
+
+        if refined_poses is not None:
+            train_pose_source = "refined"
+            train_view_ids = _split_view_ids(
+                list(scene_info.views_info.keys()), "train", eval_split_interval
+            )
+            missing = 0
+            for view_id in train_view_ids:
+                if view_id in refined_poses:
+                    img = refined_poses[view_id]
+                    scene_info.views_info[view_id].extrinsic = _make_w2c_from_qt(img.qvec, img.tvec)
+                else:
+                    missing += 1
+            if missing:
+                print(f"Warning: {missing} train view_ids missing refined poses; using original for them.")
+
     if "train" in splits:
         train_dataset = COLMAPDataset(
             views_info=scene_info.views_info,
@@ -101,10 +154,11 @@ def evaluate_photometric(exp_dir, config, gaussians, device, splits):
             gaussians, train_dataset, renderer, lpips_flag=True, device=device
         )
         train_payload = _build_payload(train_dataset, train_psnr, train_ssim, train_lpips)
+        train_payload["pose_source"] = train_pose_source
         with open(os.path.join(metrics_dir, "train.json"), "w", encoding="utf-8") as f:
             json.dump(train_payload, f, indent=2, ensure_ascii=False)
         print(
-            f"TRAIN avg_psnr={train_payload['avg_psnr']}, "
+            f"TRAIN(pose_source={train_payload['pose_source']}) avg_psnr={train_payload['avg_psnr']}, "
             f"avg_ssim={train_payload['avg_ssim']}, "
             f"avg_lpips={train_payload['avg_lpips']}"
         )
@@ -123,10 +177,11 @@ def evaluate_photometric(exp_dir, config, gaussians, device, splits):
             gaussians, val_dataset, renderer, lpips_flag=True, device=device
         )
         val_payload = _build_payload(val_dataset, val_psnr, val_ssim, val_lpips)
+        val_payload["pose_source"] = "original"
         with open(os.path.join(metrics_dir, "val.json"), "w", encoding="utf-8") as f:
             json.dump(val_payload, f, indent=2, ensure_ascii=False)
         print(
-            f"VAL avg_psnr={val_payload['avg_psnr']}, "
+            f"VAL(pose_source={val_payload['pose_source']}) avg_psnr={val_payload['avg_psnr']}, "
             f"avg_ssim={val_payload['avg_ssim']}, "
             f"avg_lpips={val_payload['avg_lpips']}"
         )
@@ -135,7 +190,7 @@ def evaluate_photometric(exp_dir, config, gaussians, device, splits):
 
 if __name__ == "__main__":
     parser = ArgumentParser(description="Evaluate a Gaussian reconstruction for a single experiment.")
-    parser.add_argument("--exp_dir", type=str, required=True, help="Experiment directory, e.g. results/truck/exp_001")
+    parser.add_argument("--exp_dir", type=str, default="results/truck/exp_003", help="Experiment directory")
     parser.add_argument("--device", type=str, default="cuda:0", help="Torch device string, e.g. cuda:0")
     parser.add_argument("--ply", type=str, default=None, help="Optional .ply path; default selects max iteration under gaussians/")
     parser.add_argument(
@@ -167,5 +222,3 @@ if __name__ == "__main__":
     gaussians.load_ply(ply_path)
 
     evaluate_photometric(exp_dir, config, gaussians, device, args.split)
-
-    # Other evaluation (TODO)
