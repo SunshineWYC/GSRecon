@@ -1,7 +1,7 @@
 scene:
   data_path: "data/truck/"
   output_path: "results/truck/"
-  exp_name: "exp_003"
+  exp_name: "exp_005"
   type: "colmap"
 
 training_params:
@@ -26,14 +26,16 @@ training_params:
   log: False
   log_interval: 100
   image_log_interval: 500
-  eval: True
+  eval: False
   eval_split_interval: 8
   eval_interval: 3000
   pose_optimize: True
-  pose_optim_params:
+  pose_updater_params:
+    init: "zero"
+  pose_optimizer_params:
     lr: 0.00001
     reg: 0.000001
-    start_iter: 2000
+    start_iter: 10000
     end_iter: 25000
     gamma_final_ratio: 0.01
 

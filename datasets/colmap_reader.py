@@ -285,3 +285,62 @@ def read_colmap_bin_array(path):
         array = np.fromfile(fid, np.float32)
     array = array.reshape((width, height, channels), order="F")
     return np.transpose(array, (1, 0, 2)).squeeze()
+
+
+def read_colmap_model(scene_dirpath):
+    sparse_dir = os.path.join(scene_dirpath, "sparse/0")
+    try:
+        cameras_extrinsic_file = os.path.join(sparse_dir, "images.bin")
+        cameras_intrinsic_file = os.path.join(sparse_dir, "cameras.bin")
+        images = read_extrinsics_binary(cameras_extrinsic_file)
+        cameras = read_intrinsics_binary(cameras_intrinsic_file)
+    except Exception:
+        cameras_extrinsic_file = os.path.join(sparse_dir, "images.txt")
+        cameras_intrinsic_file = os.path.join(sparse_dir, "cameras.txt")
+        images = read_extrinsics_text(cameras_extrinsic_file)
+        cameras = read_intrinsics_text(cameras_intrinsic_file)
+    return images, cameras
+
+
+def write_colmap_text(output_sparse_dir, images, cameras, refined_train_w2c):
+    os.makedirs(output_sparse_dir, exist_ok=True)
+
+    cameras_path = os.path.join(output_sparse_dir, "cameras.txt")
+    with open(cameras_path, "w", encoding="utf-8") as f:
+        f.write("# Camera list with one line of data per camera:\n")
+        f.write("#   CAMERA_ID, MODEL, WIDTH, HEIGHT, PARAMS[]\n")
+        for camera_id in sorted(cameras.keys()):
+            cam = cameras[camera_id]
+            params = " ".join(str(p) for p in cam.params)
+            f.write(f"{cam.id} {cam.model} {cam.width} {cam.height} {params}\n")
+
+    images_path = os.path.join(output_sparse_dir, "images.txt")
+    with open(images_path, "w", encoding="utf-8") as f:
+        f.write("# Image list with two lines of data per image:\n")
+        f.write("#   IMAGE_ID, QW, QX, QY, QZ, TX, TY, TZ, CAMERA_ID, NAME\n")
+        f.write("#   POINTS2D[] as (X, Y, POINT3D_ID)\n")
+        for image_id in sorted(images.keys()):
+            img = images[image_id]
+            if image_id in refined_train_w2c:
+                w2c = refined_train_w2c[image_id]
+                qvec = rotmat2qvec(w2c[:3, :3])
+                tvec = w2c[:3, 3]
+            else:
+                qvec = img.qvec
+                tvec = img.tvec
+            f.write(
+                f"{image_id} {qvec[0]} {qvec[1]} {qvec[2]} {qvec[3]} "
+                f"{tvec[0]} {tvec[1]} {tvec[2]} {img.camera_id} {img.name}\n"
+            )
+            if img.xys is not None and len(img.xys) > 0:
+                pts = []
+                for (x, y), pid in zip(img.xys, img.point3D_ids):
+                    pts.append(f"{x} {y} {pid}")
+                f.write(" ".join(pts) + "\n")
+            else:
+                f.write("\n")
+
+    points_path = os.path.join(output_sparse_dir, "points3D.txt")
+    with open(points_path, "w", encoding="utf-8") as f:
+        f.write("# 3D point list with one line of data per point:\n")
+        f.write("#   POINT3D_ID, X, Y, Z, R, G, B, ERROR, TRACK[] as (IMAGE_ID, POINT2D_IDX)\n")
