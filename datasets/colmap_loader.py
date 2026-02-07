@@ -212,7 +212,7 @@ class COLMAPDataset(torch.utils.data.Dataset):
 
 if __name__ == "__main__":
     # Example usage
-    colmap_scene = COLMAPSceneInfo("./data/dorm_1007_002")
+    colmap_scene = COLMAPSceneInfo("./data/truck")
     colmap_dataset = COLMAPDataset(
         colmap_scene.views_info, 
         image_scale=1.0, 

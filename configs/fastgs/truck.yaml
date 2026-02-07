@@ -1,11 +1,11 @@
 scene:
   data_path: "data/truck/"
   output_path: "results/truck/"
-  exp_name: "exp_fastgs_debug"
+  exp_name: "exp_fastgs_003"
   type: "colmap"
 
 training_params:
-  preload: True  # False:disk / True:cpu
+  preload: False  # False:disk / True:cpu
   iterations: 30000
   position_lr_init: 0.00008
   position_lr_final: 0.0000016
@@ -29,7 +29,7 @@ training_params:
   eval: False
   eval_split_interval: 8
   eval_interval: 3000
-  pose_optimize: False
+  pose_optimize: True
   pose_updater_params:
     init: "zero"
   pose_optimizer_params:

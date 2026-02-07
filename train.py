@@ -136,15 +136,34 @@ def optimize(train_dataset, eval_dataset, renderer, renderer_type, model_params,
                 pose_refiner.step(iteration)
 
             # adaptive density control: densification and prune
-            if renderer_type != "fastgs":
+            if renderer_type == "gsplat":
                 if iteration < training_params.densify_until_iter:
                     visible_gaussian_ids = info["gaussian_ids"]
                     max_radii2D = info["radii"].max(dim=1).values
                     gaussians.max_radii2D[visible_gaussian_ids] = torch.max(gaussians.max_radii2D[visible_gaussian_ids], max_radii2D)
-                    gaussians.add_densification_stats_packed(info)
 
-                if training_params.densify_from_iter < iteration < training_params.densify_until_iter:
-                    if iteration % training_params.densification_interval == 0:
+                    gaussians.add_densification_stats_gsplat_packed(info)
+                    if iteration > training_params.densify_from_iter and iteration % training_params.densification_interval == 0:
+                        size_threshold = 20 if iteration > training_params.opacity_reset_interval else None
+                        gaussians.densify_and_prune(
+                            training_params.densify_grad_threshold,
+                            0.005,
+                            scene_extent,
+                            size_threshold,
+                            model_params.max_num_gaussians,
+                        )
+
+                    if iteration % training_params.opacity_reset_interval == 0:
+                        gaussians.reset_opacity()
+
+            elif renderer_type == "fastgs":
+                if iteration < training_params.densify_until_iter:
+                    radii = info["radii"]
+                    visible_mask = info["visibility_filter"]
+                    gaussians.max_radii2D[visible_mask] = torch.max(gaussians.max_radii2D[visible_mask], radii[visible_mask])
+                    gaussians.add_densification_stats_grad(info["means2d"], visible_mask)
+
+                    if iteration > training_params.densify_from_iter and iteration % training_params.densification_interval == 0:
                         size_threshold = 20 if iteration > training_params.opacity_reset_interval else None
                         gaussians.densify_and_prune(
                             training_params.densify_grad_threshold,
@@ -157,8 +176,7 @@ def optimize(train_dataset, eval_dataset, renderer, renderer_type, model_params,
                     if iteration % training_params.opacity_reset_interval == 0:
                         gaussians.reset_opacity()
             else:
-                if iteration % training_params.opacity_reset_interval == 0:
-                    gaussians.reset_opacity()
+                pass
 
         # logging
         if logger:

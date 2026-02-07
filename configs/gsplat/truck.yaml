@@ -5,7 +5,7 @@ scene:
   type: "colmap"
 
 training_params:
-  preload: True  # False:disk / True:cpu
+  preload: False  # False:disk / True:cpu
   iterations: 30000
   position_lr_init: 0.00008
   position_lr_final: 0.0000016
