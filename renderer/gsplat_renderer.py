@@ -156,9 +156,9 @@ class GSplatPoseRefiner:
         else:
             self.pose_scheduler = None
 
-    def refine_extrinsic_w2c(self, extrinsic_w2c: Tensor, view_ids, iteration: int) -> Tensor:
+    def refine_pose(self, extrinsic_w2c: Tensor, view_ids, iteration: int):
         if iteration < self.start_iter:
-            return extrinsic_w2c
+            return extrinsic_w2c, {}
 
         camtoworld = torch.linalg.inv(extrinsic_w2c)
         if iteration <= self.end_iter:
@@ -166,7 +166,7 @@ class GSplatPoseRefiner:
         else:
             with torch.no_grad():
                 camtoworld = self.pose_updater(camtoworld, view_ids)
-        return torch.linalg.inv(camtoworld)
+        return torch.linalg.inv(camtoworld), {}
 
     def step(self, iteration: int):
         if self.start_iter <= iteration <= self.end_iter and self.update_steps > 0:
@@ -181,7 +181,7 @@ class GSplatPoseRefiner:
             for view_id, view_info in zip(train_dataset.view_ids, train_dataset.views_info_list):
                 w2c = torch.tensor(view_info.extrinsic, dtype=torch.float32, device=device).unsqueeze(0)
                 w2c[..., :3, 3] *= scene_scale
-                w2c_ref = self.refine_extrinsic_w2c(w2c, [int(view_id)], self.end_iter + 1)
+                w2c_ref, _ = self.refine_pose(w2c, [int(view_id)], self.end_iter + 1)
                 w2c_ref = w2c_ref.squeeze(0)
                 w2c_ref[:3, 3] /= scene_scale
                 refined_train_w2c[int(view_id)] = w2c_ref.detach().cpu().numpy()

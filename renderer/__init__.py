@@ -1,11 +1,14 @@
 from renderer.gsplat_renderer import GSplatRenderer, GSplatPoseRefiner
+from renderer.fastgs_renderer import FastGSRenderer, FastGSPoseRefiner
 
 
 def create_renderer(renderer_type, **kwargs):
     if renderer_type == "gsplat":
         return GSplatRenderer(**kwargs)
+    elif renderer_type == "fastgs":
+        return FastGSRenderer(**kwargs)
     else:
-        return GSplatRenderer(**kwargs)
+        raise ValueError(f"Unknown renderer_type: {renderer_type}")
 
 
 def create_pose_refiner(renderer_type, view_ids, device, total_iters, pose_updater_params, pose_optimizer_params):
@@ -17,11 +20,13 @@ def create_pose_refiner(renderer_type, view_ids, device, total_iters, pose_updat
             pose_updater_params=pose_updater_params,
             pose_optimizer_params=pose_optimizer_params,
         )
-    else:
-        return GSplatPoseRefiner(
+    elif renderer_type == "fastgs":
+        return FastGSPoseRefiner(
             view_ids=view_ids,
             device=device,
             total_iters=total_iters,
             pose_updater_params=pose_updater_params,
             pose_optimizer_params=pose_optimizer_params,
         )
+    else:
+        raise ValueError(f"Unknown renderer_type: {renderer_type}")

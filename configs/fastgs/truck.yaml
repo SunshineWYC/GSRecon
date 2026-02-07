@@ -1,0 +1,56 @@
+scene:
+  data_path: "data/truck/"
+  output_path: "results/truck/"
+  exp_name: "exp_fastgs_debug"
+  type: "colmap"
+
+training_params:
+  preload: True  # False:disk / True:cpu
+  iterations: 30000
+  position_lr_init: 0.00008
+  position_lr_final: 0.0000016
+  position_lr_delay_mult: 0.01
+  position_lr_max_steps: 30000
+  feature_lr: 0.0025
+  opacity_lr: 0.025
+  scaling_lr: 0.005
+  rotation_lr: 0.001
+  lambda_dssim: 0.2
+  optimizer_type: "default"
+  opacity_reset_interval: 3000
+  densification_interval: 200
+  densify_from_iter: 500
+  densify_until_iter: 15000
+  densify_grad_threshold: 0.0004
+  percent_dense: 0.01
+  log: False
+  log_interval: 100
+  image_log_interval: 500
+  eval: False
+  eval_split_interval: 8
+  eval_interval: 3000
+  pose_optimize: False
+  pose_updater_params:
+    init: "zero"
+  pose_optimizer_params:
+    rot_lr: 0.00002
+    trans_lr: 0.00001
+    reg: 0.000001
+    start_iter: 2000
+    end_iter: 25000
+    gamma_final_ratio: 0.01
+
+renderer_params:
+  renderer_type: "fastgs"
+  znear: 0.01
+  zfar: 100.0
+  antialiasing: True
+  scale_modifier: 1.0
+  bg_color: [0.0, 0.0, 0.0]
+
+model_params:
+  image_scale: 1.0
+  scene_scale: 1.0
+  spherical_harmonics: True
+  sh_degree: 3
+  max_num_gaussians: 10000000

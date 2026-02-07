@@ -101,9 +101,10 @@ def optimize(train_dataset, eval_dataset, renderer, renderer_type, model_params,
         view_id, view_data = next(data_iter)
         
         extrinsic = view_data["extrinsic"].to(device, non_blocking=True)
+        render_kwargs = {}
         if pose_refiner is not None:
             view_ids_list = _to_view_ids_list(view_id)
-            extrinsic = pose_refiner.refine_extrinsic_w2c(extrinsic, view_ids_list, iteration)
+            extrinsic, render_kwargs = pose_refiner.refine_pose(extrinsic, view_ids_list, iteration)
         intrinsic = view_data["intrinsic"].to(device, non_blocking=True)
         image_height, image_width = view_data["height"], view_data["width"]
         image_gt = view_data["image"][0].to(device, non_blocking=True)
@@ -115,7 +116,8 @@ def optimize(train_dataset, eval_dataset, renderer, renderer_type, model_params,
             sh_degree=gaussians.active_sh_degree,
             image_height=image_height,
             image_width=image_width,
-            device=device
+            device=device,
+            **render_kwargs
         )
 
         # calculate loss
@@ -134,25 +136,27 @@ def optimize(train_dataset, eval_dataset, renderer, renderer_type, model_params,
                 pose_refiner.step(iteration)
 
             # adaptive density control: densification and prune
-            # accumulate densification stats
-            if iteration < training_params.densify_until_iter:
-                visible_gaussian_ids = info["gaussian_ids"]
-                max_radii2D = info["radii"].max(dim=1).values
-                gaussians.max_radii2D[visible_gaussian_ids] = torch.max(gaussians.max_radii2D[visible_gaussian_ids], max_radii2D)
-                gaussians.add_densification_stats_packed(info)
+            if renderer_type != "fastgs":
+                if iteration < training_params.densify_until_iter:
+                    visible_gaussian_ids = info["gaussian_ids"]
+                    max_radii2D = info["radii"].max(dim=1).values
+                    gaussians.max_radii2D[visible_gaussian_ids] = torch.max(gaussians.max_radii2D[visible_gaussian_ids], max_radii2D)
+                    gaussians.add_densification_stats_packed(info)
 
-            # perform densification, pruning and reset opacity
-            if training_params.densify_from_iter < iteration < training_params.densify_until_iter:
-                if iteration % training_params.densification_interval == 0:
-                    size_threshold = 20 if iteration > training_params.opacity_reset_interval else None
-                    gaussians.densify_and_prune(
-                        training_params.densify_grad_threshold,
-                        0.005,
-                        scene_extent,
-                        size_threshold,
-                        model_params.max_num_gaussians,
-                    )
+                if training_params.densify_from_iter < iteration < training_params.densify_until_iter:
+                    if iteration % training_params.densification_interval == 0:
+                        size_threshold = 20 if iteration > training_params.opacity_reset_interval else None
+                        gaussians.densify_and_prune(
+                            training_params.densify_grad_threshold,
+                            0.005,
+                            scene_extent,
+                            size_threshold,
+                            model_params.max_num_gaussians,
+                        )
 
+                    if iteration % training_params.opacity_reset_interval == 0:
+                        gaussians.reset_opacity()
+            else:
                 if iteration % training_params.opacity_reset_interval == 0:
                     gaussians.reset_opacity()
 
@@ -215,7 +219,7 @@ def optimize(train_dataset, eval_dataset, renderer, renderer_type, model_params,
 
 if __name__ == "__main__":
     parser = ArgumentParser(description="Spatial block training script parameters")
-    parser.add_argument("--config", type=str, default="configs/truck.yaml", help="Path to the configuration file")
+    parser.add_argument("--config", type=str, default="configs/fastgs/truck.yaml", help="Path to the configuration file")
     args = parser.parse_args(sys.argv[1:])
     config = load_config(args.config)
 
@@ -230,7 +234,9 @@ if __name__ == "__main__":
     model_params.sh_degree = model_params.get("sh_degree", 0) if model_params.spherical_harmonics else 0
 
     # renderer definition
-    renderer = create_renderer(renderer_type=renderer_params.get("renderer_type", "gsplat"))
+    renderer_cfg = dict(renderer_params)
+    renderer_type = renderer_cfg.pop("renderer_type", "gsplat")
+    renderer = create_renderer(renderer_type=renderer_type, **renderer_cfg)
 
     # scene info and pcd filepath
     scene_info = COLMAPSceneInfo(config["scene"]["data_path"])
@@ -259,7 +265,7 @@ if __name__ == "__main__":
         train_dataset,
         eval_dataset,
         renderer=renderer,
-        renderer_type=renderer_params.get("renderer_type", "gsplat"),
+        renderer_type=renderer_type,
         model_params=model_params,
         training_params=training_params,
         device=device,

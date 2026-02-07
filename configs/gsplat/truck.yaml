@@ -1,7 +1,7 @@
 scene:
   data_path: "data/truck/"
   output_path: "results/truck/"
-  exp_name: "exp_005"
+  exp_name: "exp_gsplat_debug"
   type: "colmap"
 
 training_params:
@@ -35,7 +35,7 @@ training_params:
   pose_optimizer_params:
     lr: 0.00001
     reg: 0.000001
-    start_iter: 10000
+    start_iter: 2000
     end_iter: 25000
     gamma_final_ratio: 0.01
 
