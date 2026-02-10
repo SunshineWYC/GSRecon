@@ -191,6 +191,7 @@ class COLMAPDataset(torch.utils.data.Dataset):
         """
         Preload all snapshot data into memory with multi-threading.
         """
+        print("Preloading data from disk to CPU RAM.")
         views_data = [None] * self.num_views
         
         with ThreadPoolExecutor(max_workers=num_workers) as executor:
@@ -198,6 +199,7 @@ class COLMAPDataset(torch.utils.data.Dataset):
             for future in as_completed(futures):
                 idx = futures[future]
                 views_data[idx] = future.result()
+        print("Data preloading finished.")
         return views_data
 
     def __getitem__(self, idx):
