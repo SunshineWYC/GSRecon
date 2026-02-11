@@ -179,11 +179,6 @@ class FastGSRenderer:
         scales = gaussians.get_scaling
         rotations = gaussians.get_rotation
 
-        if theta is None:
-            theta = torch.empty(0, device=means3D.device, dtype=means3D.dtype)
-        if rho is None:
-            rho = torch.empty(0, device=means3D.device, dtype=means3D.dtype)
-
         render_colors, radii, invdepths, accum_metric_counts = rasterizer(
             means3D=means3D,
             means2D=means2D,
@@ -227,7 +222,10 @@ class FastGSCameraOptModule(torch.nn.Module):
         view_id = int(view_ids[0])
         if view_id not in self.view_id_to_embed:
             raise KeyError(f"view_id {view_id} is not in FastGSCameraOptModule mapping.")
-        embed_idx = torch.tensor(self.view_id_to_embed[view_id], device=self.rot_embed.weight.device, dtype=torch.long)
+        # Use shape [1] so embedding output is [1, 3], matching rasterizer backward grad shape.
+        embed_idx = torch.tensor(
+            [self.view_id_to_embed[view_id]], device=self.rot_embed.weight.device, dtype=torch.long
+        )
         theta = self.rot_embed(embed_idx)
         rho = self.trans_embed(embed_idx)
         return theta, rho
@@ -266,6 +264,23 @@ class FastGSPoseRefiner:
             self.rot_scheduler = None
             self.trans_scheduler = None
 
+    def _apply_delta_left_multiply(self, extrinsic_w2c: Tensor, theta: Tensor, rho: Tensor):
+        with torch.no_grad():
+            tau = torch.cat([rho.reshape(-1), theta.reshape(-1)], dim=0)
+            T_delta = _se3_exp(tau)
+            refined_w2c = extrinsic_w2c.clone()
+            refined_w2c[0] = T_delta @ refined_w2c[0]
+        return refined_w2c
+
+    def _align_pose_delta(self, theta: Tensor, rho: Tensor, extrinsic_w2c: Tensor):
+        if theta.numel() != 3 or rho.numel() != 3:
+            raise ValueError(
+                f"FastGSPoseRefiner expects theta/rho to contain 3 elements each (got {theta.shape=} {rho.shape=})."
+            )
+        theta = theta.reshape(1, 3).to(device=extrinsic_w2c.device, dtype=extrinsic_w2c.dtype)
+        rho = rho.reshape(1, 3).to(device=extrinsic_w2c.device, dtype=extrinsic_w2c.dtype)
+        return theta, rho
+
     def refine_pose(self, extrinsic_w2c: Tensor, view_ids, iteration: int):
         """
         Actually directly get the delta_rot(theta) and delta_trans(rho) here
@@ -279,8 +294,8 @@ class FastGSPoseRefiner:
             {"theta": theta, "rho": rho}: new updated delta_rot and delta_trans
         """
         if iteration < self.start_iter:
-            theta = torch.zeros(3, device=self.device)
-            rho = torch.zeros(3, device=self.device)
+            theta = torch.zeros((1, 3), device=extrinsic_w2c.device, dtype=extrinsic_w2c.dtype)
+            rho = torch.zeros((1, 3), device=extrinsic_w2c.device, dtype=extrinsic_w2c.dtype)
             return extrinsic_w2c, {"theta": theta, "rho": rho}
 
         if iteration <= self.end_iter:
@@ -288,7 +303,9 @@ class FastGSPoseRefiner:
         else:
             with torch.no_grad():
                 theta, rho = self.pose_updater(view_ids)
-        return extrinsic_w2c, {"theta": theta, "rho": rho}
+        theta, rho = self._align_pose_delta(theta, rho, extrinsic_w2c)
+        refined_w2c = self._apply_delta_left_multiply(extrinsic_w2c, theta, rho)
+        return refined_w2c, {"theta": theta, "rho": rho}
 
     def step(self, iteration: int):
         if self.start_iter <= iteration <= self.end_iter and self.update_steps > 0:
@@ -308,9 +325,7 @@ class FastGSPoseRefiner:
                 w2c = torch.tensor(view_info.extrinsic, dtype=torch.float32, device=device).unsqueeze(0)
                 w2c[..., :3, 3] *= scene_scale
                 theta, rho = self.pose_updater([int(view_id)])
-                tau = torch.cat([rho, theta], dim=0)
-                T_delta = _se3_exp(tau)
-                w2c_ref = (T_delta @ w2c.squeeze(0)).clone()
+                w2c_ref = self._apply_delta_left_multiply(w2c, theta, rho).squeeze(0)
                 w2c_ref[:3, 3] /= scene_scale
                 refined_train_w2c[int(view_id)] = w2c_ref.detach().cpu().numpy()
         return refined_train_w2c

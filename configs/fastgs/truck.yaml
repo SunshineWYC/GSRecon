@@ -1,7 +1,7 @@
 scene:
   data_path: "data/truck/"
-  output_path: "results/truck/"
-  exp_name: "exp_fastgs_003"
+  output_path: "results/fastgs/truck/"
+  exp_name: "debug"
   type: "colmap"
 
 training_params:
