@@ -200,9 +200,9 @@ class FastGSRenderer:
             "visibility_filter": (radii > 0).nonzero(),
             "means2d": means2D,
             "accum_metric_counts": accum_metric_counts,
-            "height": [image_height],
-            "width": [image_width],
-            "n_cameras": extrinsic.shape[0]
+            "height": int(image_height),
+            "width": int(image_width),
+            "n_cameras": int(extrinsic.shape[0]),
         }
         return image_rendered, invdepths, info
 

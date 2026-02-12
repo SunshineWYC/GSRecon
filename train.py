@@ -10,7 +10,7 @@ from munch import munchify
 from argparse import ArgumentParser
 from utils.config_utils import load_config
 from renderer import create_renderer, create_pose_refiner
-from utils.utils import infinite_dataloader, load_pcdfile
+from utils.utils import infinite_dataloader, load_pcdfile, collate_single_view
 from utils.eval_utils import evaluate_gaussian_photometric
 from torch.utils.tensorboard import SummaryWriter
 from gaussian_splatting.gaussian_model import GaussianModel
@@ -46,7 +46,21 @@ def optimize(train_dataset, eval_dataset, renderer, renderer_type, model_params,
     pose_refiner = None
 
     # dataloader definition
-    if training_params.get("preload", False):
+    preload = bool(training_params.get("preload", False))
+    preload_device = str(training_params.get("preload_device", "cpu")).lower()
+    gpu_preload = preload and preload_device.startswith("cuda")
+    if gpu_preload:
+        dataloader = torch.utils.data.DataLoader(
+            dataset=train_dataset,
+            batch_size=1,
+            shuffle=True,
+            num_workers=0,
+            pin_memory=False,
+            persistent_workers=False,
+            drop_last=False,
+            collate_fn=collate_single_view,
+        )
+    elif preload:
         dataloader = torch.utils.data.DataLoader(
             dataset=train_dataset,
             batch_size=1,
@@ -54,6 +68,7 @@ def optimize(train_dataset, eval_dataset, renderer, renderer_type, model_params,
             num_workers=0,
             pin_memory=True,
             drop_last=False,
+            collate_fn=collate_single_view,
         )
     else:
         dataloader = torch.utils.data.DataLoader(
@@ -64,6 +79,7 @@ def optimize(train_dataset, eval_dataset, renderer, renderer_type, model_params,
             pin_memory=True,
             persistent_workers=True,
             drop_last=False,
+            collate_fn=collate_single_view,
         )
     data_iter = infinite_dataloader(dataloader)
 
@@ -264,6 +280,8 @@ if __name__ == "__main__":
         image_scale=model_params.get("image_scale", 1.0),
         scene_scale=model_params.get("scene_scale", 1.0),
         preload=training_params.get("preload", False),
+        preload_device=training_params.get("preload_device", "cpu"),
+        preload_dtype=training_params.get("preload_dtype", "fp32"),
         split="train",
         eval_split_interval=training_params.get("eval_split_interval", 8),
     )
@@ -273,6 +291,8 @@ if __name__ == "__main__":
             image_scale=model_params.get("image_scale", 1.0),
             scene_scale=model_params.get("scene_scale", 1.0),
             preload=training_params.get("preload", False),
+            preload_device=training_params.get("preload_device", "cpu"),
+            preload_dtype=training_params.get("preload_dtype", "fp32"),
             split="val",
             eval_split_interval=training_params.get("eval_split_interval", 8),
         )

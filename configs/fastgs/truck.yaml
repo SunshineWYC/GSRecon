@@ -1,11 +1,13 @@
 scene:
   data_path: "data/truck/"
   output_path: "results/fastgs/truck/"
-  exp_name: "debug"
+  exp_name: "exp_002"
   type: "colmap"
 
 training_params:
-  preload: False  # False:disk / True:cpu
+  preload: True  # False:disk / True:cpu/cuda
+  preload_device: "cpu"  # "cuda:0" / "cpu"
+  preload_dtype: "fp32"
   iterations: 30000
   position_lr_init: 0.00008
   position_lr_final: 0.0000016

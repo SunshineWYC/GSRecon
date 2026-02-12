@@ -106,6 +106,8 @@ def evaluate_photometric(exp_dir, config, gaussians, device, splits):
     image_scale = float(model_params.get("image_scale", 1.0))
     scene_scale = float(model_params.get("scene_scale", 1.0))
     preload = bool(training_params.get("preload", False))
+    preload_device = training_params.get("preload_device", "cpu")
+    preload_dtype = training_params.get("preload_dtype", "fp32")
     eval_split_interval = int(training_params.get("eval_split_interval", 8))
 
     renderer_cfg = dict(renderer_params)
@@ -147,6 +149,8 @@ def evaluate_photometric(exp_dir, config, gaussians, device, splits):
             image_scale=image_scale,
             scene_scale=scene_scale,
             preload=preload,
+            preload_device=preload_device,
+            preload_dtype=preload_dtype,
             split="train",
             eval_split_interval=eval_split_interval,
         )
@@ -170,6 +174,8 @@ def evaluate_photometric(exp_dir, config, gaussians, device, splits):
             image_scale=image_scale,
             scene_scale=scene_scale,
             preload=preload,
+            preload_device=preload_device,
+            preload_dtype=preload_dtype,
             split="val",
             eval_split_interval=eval_split_interval,
         )

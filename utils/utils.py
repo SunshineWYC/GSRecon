@@ -4,6 +4,7 @@ from PIL import Image
 from plyfile import PlyData, PlyElement
 from gaussian_splatting.utils.graphics_utils import BasicPointCloud
 from datasets.colmap_reader import read_points3D_binary, read_points3D_text
+import torch
 
 
 def fetch_ply(path, scene_scale=1.0):
@@ -37,3 +38,22 @@ def infinite_dataloader(loader):
     while True:
         for batch in loader:
             yield batch
+
+
+def collate_single_view(batch):
+    """
+    Collate function for batch_size=1 that avoids torch.stack copies.
+    Expects items like: (view_id, view_data_dict).
+    """
+    if len(batch) != 1:
+        raise ValueError(f"collate_single_view expects batch_size=1, got batch size {len(batch)}.")
+    view_id, view_data = batch[0]
+
+    collated = {}
+    for key, value in view_data.items():
+        if isinstance(value, torch.Tensor):
+            collated[key] = value.unsqueeze(0)
+        else:
+            collated[key] = value
+
+    return view_id, collated

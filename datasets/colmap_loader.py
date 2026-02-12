@@ -92,7 +92,17 @@ class COLMAPSceneInfo:
 
 
 class COLMAPDataset(torch.utils.data.Dataset):
-    def __init__(self, views_info, image_scale=1.0, scene_scale=1.0, preload=False, split=None, eval_split_interval=8):
+    def __init__(
+        self,
+        views_info,
+        image_scale=1.0,
+        scene_scale=1.0,
+        preload=False,
+        preload_device="cpu",
+        preload_dtype="fp32",
+        split=None,
+        eval_split_interval=8,
+    ):
         super(COLMAPDataset, self).__init__()
         self.views_info = views_info
         self.image_scale = image_scale
@@ -101,7 +111,14 @@ class COLMAPDataset(torch.utils.data.Dataset):
         self.views_info_list, self.view_ids, self.num_views = self._split_views(split, split_interval=eval_split_interval)
 
         self.preload = preload
+        self.preload_device = torch.device(preload_device) if isinstance(preload_device, str) else preload_device
+        self.preload_dtype = str(preload_dtype).lower()
         if preload:
+            if self.preload_device.type == "cuda" and not torch.cuda.is_available():
+                raise RuntimeError(
+                    f"Requested preload_device={self.preload_device}, but torch.cuda.is_available() is False. "
+                    "Set training_params.preload_device to 'cpu' or disable preload."
+                )
             self.views_data = self._preload_data()
 
     def __len__(self):
@@ -191,7 +208,7 @@ class COLMAPDataset(torch.utils.data.Dataset):
         """
         Preload all snapshot data into memory with multi-threading.
         """
-        print("Preloading data from disk to CPU RAM.")
+        print("Preloading data from disk to RAM/VRAM.")
         views_data = [None] * self.num_views
         
         with ThreadPoolExecutor(max_workers=num_workers) as executor:
@@ -199,7 +216,21 @@ class COLMAPDataset(torch.utils.data.Dataset):
             for future in as_completed(futures):
                 idx = futures[future]
                 views_data[idx] = future.result()
-        print("Data preloading finished.")
+
+        if self.preload_device.type == "cuda":
+            if self.preload_dtype not in {"fp32", "fp16"}:
+                raise ValueError(f"Unsupported preload_dtype: {self.preload_dtype}. Expected 'fp32' or 'fp16'.")
+            image_dtype = torch.float32 if self.preload_dtype == "fp32" else torch.float16
+            for idx, view_data in enumerate(views_data):
+                # Move only tensors required by training/eval; keep metadata as python objects.
+                view_data["image"] = view_data["image"].to(self.preload_device, dtype=image_dtype, non_blocking=False)
+                view_data["mask"] = view_data["mask"].to(self.preload_device, dtype=image_dtype, non_blocking=False)
+                view_data["intrinsic"] = view_data["intrinsic"].to(self.preload_device, dtype=torch.float32, non_blocking=False)
+                view_data["extrinsic"] = view_data["extrinsic"].to(self.preload_device, dtype=torch.float32, non_blocking=False)
+                views_data[idx] = view_data
+
+        print("Data preloaded.")
+
         return views_data
 
     def __getitem__(self, idx):
