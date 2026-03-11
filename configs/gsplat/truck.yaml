@@ -1,7 +1,7 @@
 scene:
   data_path: "data/truck/"
   output_path: "results/gsplat/truck/"
-  exp_name: "exp_debug"
+  exp_name: "exp_002"
   type: "colmap"
 
 training_params:
@@ -18,9 +18,9 @@ training_params:
   scaling_lr: 0.005
   rotation_lr: 0.001
   lambda_dssim: 0.2
-  optimizer_type: "default"
+  optimizer_type: "default" # "default" / sparse_adam" / "selective_adam"
   opacity_reset_interval: 3000
-  densification_interval: 200
+  densification_interval: 100
   densify_from_iter: 500
   densify_until_iter: 15000
   densify_grad_threshold: 0.0004
@@ -32,7 +32,7 @@ training_params:
   eval: False
   eval_split_interval: 8
   eval_interval: 3000
-  pose_optimize: False
+  pose_optimize: True
   pose_updater_params:
     init: "zero"
   pose_optimizer_params:

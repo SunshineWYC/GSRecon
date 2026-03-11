@@ -451,7 +451,7 @@ class GaussianModel:
 
         torch.cuda.empty_cache()
 
-    def add_densification_stats_gsplat_packed(self, info):
+    def add_densification_stats_packed(self, info):
         grads = info["means2d"].absgrad.clone()
         # follow the gsplat source code to scale the gradients
         grads[..., 0] *= info["width"] / 2.0 * info["n_cameras"]
@@ -461,7 +461,7 @@ class GaussianModel:
         self.xyz_gradient_accum[visible_gaussian_ids] += torch.norm(grads, dim=-1, keepdim=True)
         self.denom[visible_gaussian_ids] += 1
 
-    def add_densification_stats_gsplat(self, info, visible_mask):
+    def add_densification_stats(self, info, visible_mask):
         grads = info["means2d"].absgrad.clone().squeeze(0)
         grads = grads[visible_mask]
         # follow the gsplat source code to scale the gradients

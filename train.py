@@ -111,10 +111,12 @@ def optimize(train_dataset, eval_dataset, renderer, renderer_type, model_params,
     pbar = tqdm(range(training_params.iterations), desc="Optimizing...", unit="it")
     for iter_idx in pbar:
         iteration = iter_idx + 1
-        gaussians.update_learning_rate(iteration)
         if iteration % 1000 == 0:
             gaussians.oneupSHdegree()
-        densify_rate_current = 1.0
+
+        # update scheduler learning rates
+        gaussians.update_learning_rate(iteration)
+        pose_refiner.pose_scheduler.step() if pose_refiner and pose_refiner.pose_scheduler else None
 
         view_id, view_data = next(data_iter)
         
@@ -124,6 +126,7 @@ def optimize(train_dataset, eval_dataset, renderer, renderer_type, model_params,
             view_ids_list = _to_view_ids_list(view_id)
             extrinsic, render_kwargs = pose_refiner.refine_pose(extrinsic, view_ids_list, iteration)
         intrinsic = view_data["intrinsic"].to(device, non_blocking=True)
+        image_height, image_width = view_data["height"], view_data["width"]
         image_gt = view_data["image"][0].to(device, non_blocking=True)
 
         image_rendered, depth_rendered, info = renderer.render(
@@ -133,50 +136,43 @@ def optimize(train_dataset, eval_dataset, renderer, renderer_type, model_params,
             sh_degree=gaussians.active_sh_degree,
             image_height=image_height,
             image_width=image_width,
-            device=device,
-            **render_kwargs
+            device=device
         )
 
         # calculate loss
-        loss_l1_color = l1_loss(image_rendered, image_gt_render)
-        loss_ssim = 1.0 - fast_ssim(image_rendered.unsqueeze(0), image_gt_render.unsqueeze(0))
+        loss_l1_color = l1_loss(image_rendered, image_gt)
+        loss_ssim = 1.0 - fast_ssim(image_rendered.unsqueeze(0), image_gt.unsqueeze(0))
         loss_color = (1.0 - training_params.lambda_dssim) * loss_l1_color + training_params.lambda_dssim * loss_ssim
 
         loss = loss_color
         loss.backward()
 
         with torch.no_grad():
+            # Optimizer step for gaussians and pose_refiner
             gaussians.optimizer.step()
             gaussians.optimizer.zero_grad(set_to_none=True)
-
             if pose_refiner is not None:
                 pose_refiner.step(iteration)
 
             # adaptive density control: densification and prune
+            # accumulate densification stats
             if iteration < training_params.densify_until_iter:
                 visible_gaussian_ids = info["gaussian_ids"]
                 max_radii2D = info["radii"].max(dim=1).values
                 gaussians.max_radii2D[visible_gaussian_ids] = torch.max(gaussians.max_radii2D[visible_gaussian_ids], max_radii2D)
+                gaussians.add_densification_stats_packed(info)
 
-                gaussians.add_densification_stats_gsplat_packed(info)
-                if iteration > training_params.densify_from_iter and iteration % training_params.densification_interval == 0:
+            # perform densification, pruning and reset opacity
+            if training_params.densify_from_iter < iteration < training_params.densify_until_iter:
+                if iteration % training_params.densification_interval == 0:
                     size_threshold = 20 if iteration > training_params.opacity_reset_interval else None
-                    densify_rate_current = scheduler.get_densify_rate(
-                        iteration=iteration,
-                        cur_n_gaussian=gaussians.get_xyz.shape[0],
-                        cur_scale=render_scale,
-                    ) if scheduler is not None else 1.0
-                    momentum_add = gaussians.prune_and_densify_topk(
+                    gaussians.densify_and_prune(
                         training_params.densify_grad_threshold,
                         0.005,
                         scene_extent,
                         size_threshold,
                         model_params.max_num_gaussians,
-                        densify_rate=densify_rate_current,
                     )
-                    if scheduler is not None:
-                        scheduler.update_momentum(momentum_add)
-                        n_max_current = int(scheduler.max_n_gaussian)
 
                 if iteration % training_params.opacity_reset_interval == 0:
                     gaussians.reset_opacity()
@@ -193,7 +189,7 @@ def optimize(train_dataset, eval_dataset, renderer, renderer_type, model_params,
             # training image logging
             if iteration % training_params.image_log_interval == 0:
                 logger.add_image("image/image_rendered", image_rendered, iteration)
-                logger.add_image("image/image_gt", image_gt_render, iteration)
+                logger.add_image("image/image_gt", image_gt, iteration)
 
             # evaluation on dataset and metrics logging
             if training_params.get("eval", False):
@@ -203,13 +199,7 @@ def optimize(train_dataset, eval_dataset, renderer, renderer_type, model_params,
                     logger.add_scalar("Metrics/eval_ssim", sum(ssim_scores.values()) / len(ssim_scores), iteration)
                     logger.add_scalar("Metrics/eval_lpips", sum(lpips_scores.values()) / len(lpips_scores), iteration)
 
-        pbar.set_postfix(
-            loss=f"{loss.item():.4f}",
-            num_gs=f"{gaussians.get_xyz.shape[0]}",
-            R=f"{render_scale}",
-            densify_rate=f"{densify_rate_current:.3f}",
-            N_MAX=f"{n_max_current}",
-        )
+        pbar.set_postfix(loss=f"{loss.item():.4f}", num_gs=f"{gaussians.get_xyz.shape[0]}")
 
     # save gaussian model
     t2 = time.perf_counter()

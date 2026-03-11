@@ -2,7 +2,7 @@ import os
 import numpy as np
 from PIL import Image
 from plyfile import PlyData, PlyElement
-from gaussian_splatting.utils.graphics_utils import BasicPointCloud
+from utils.graphics_utils import BasicPointCloud
 from datasets.colmap_reader import read_points3D_binary, read_points3D_text
 import torch
 
