@@ -7,7 +7,7 @@ import lpips
 from gsplat.rendering import rasterization
 from utils.loss_utils import create_window
 from fused_ssim import fused_ssim as fast_ssim
-from utils.utils import collate_single_view
+from utils.utils import create_dataloader, collate_single_view
 
 
 def ssim_mask(img1, img2, mask, window_size=11):
@@ -50,27 +50,14 @@ def ssim_mask(img1, img2, mask, window_size=11):
 
 @torch.no_grad()
 def evaluate_gaussian_photometric(gaussians, dataset, renderer, lpips_flag=True, device="cuda:0"):
-    gpu_preload = bool(getattr(dataset, "preload", False)) and getattr(dataset, "preload_device", torch.device("cpu")).type == "cuda"
-    if gpu_preload:
-        dataloader = torch.utils.data.DataLoader(
-            dataset,
-            batch_size=1,
-            shuffle=False,
-            num_workers=0,
-            pin_memory=False,
-            drop_last=False,
-            collate_fn=collate_single_view,
-        )
-    else:
-        dataloader = torch.utils.data.DataLoader(
-            dataset,
-            batch_size=1,
-            shuffle=False,
-            num_workers=8,
-            pin_memory=True,
-            drop_last=False,
-            collate_fn=collate_single_view,
-        )
+    dataloader = create_dataloader(
+        dataset=dataset,
+        batch_size=1,
+        shuffle=False,
+        num_workers=8,
+        preload=getattr(dataset, "preload", False),
+        preload_device=getattr(dataset, "preload_device", "cpu")
+    )
     dataloader_iter = iter(dataloader)
 
     psnr_scores, ssim_scores, lpips_scores = {}, {}, {}

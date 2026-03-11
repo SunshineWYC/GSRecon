@@ -57,3 +57,45 @@ def collate_single_view(batch):
             collated[key] = value
 
     return view_id, collated
+
+
+def create_dataloader(dataset, batch_size=1, shuffle=False, num_workers=4, preload=False, preload_device="cpu"):
+    """
+    Encapsulate DataLoader creation logic and optimize parameters based on preloading settings.
+    
+    Args:
+        dataset: Dataset instance.
+        batch_size: Batch size.
+        shuffle: Whether to shuffle.
+        num_workers: Number of data loading workers.
+        preload: Whether to enable preloading.
+        preload_device: Preloading device (str or torch.device).
+    """
+    preload = bool(preload)
+    if isinstance(preload_device, torch.device):
+        is_cuda_preload = preload_device.type == "cuda"
+    else:
+        is_cuda_preload = str(preload_device).lower().startswith("cuda")
+
+    gpu_preload = preload and is_cuda_preload
+
+    # Optimized configuration for GPU preloading
+    if gpu_preload:
+        nw, pm, pw = 0, False, False
+    # Optimized configuration for CPU preloading
+    elif preload:
+        nw, pm, pw = 0, True, False
+    # Regular loading configuration
+    else:
+        nw, pm, pw = num_workers, True, (num_workers > 0)
+
+    return torch.utils.data.DataLoader(
+        dataset=dataset,
+        batch_size=batch_size,
+        shuffle=shuffle,
+        num_workers=nw,
+        pin_memory=pm,
+        persistent_workers=pw,
+        drop_last=False,
+        collate_fn=collate_single_view,
+    )

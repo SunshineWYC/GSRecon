@@ -11,17 +11,13 @@ from munch import munchify
 from argparse import ArgumentParser
 from utils.config_utils import load_config
 from gaussian_splatting import create_renderer, create_pose_refiner
-from utils.utils import infinite_dataloader, load_pcdfile, collate_single_view
+from utils.utils import create_dataloader, infinite_dataloader, load_pcdfile, collate_single_view
 from utils.eval_utils import evaluate_gaussian_photometric
 from torch.utils.tensorboard import SummaryWriter
 from gaussian_splatting.gsplat.gaussian_model import GaussianModel
 from utils.loss_utils import l1_loss
 from fused_ssim import fused_ssim as fast_ssim
-from datasets.colmap_loader import COLMAPSceneInfo, COLMAPDataset
-from datasets.colmap_reader import (
-    read_colmap_model,
-    write_colmap_text
-)
+from datasets.colmap_loader import read_colmap_model, write_colmap_text, COLMAPSceneInfo, COLMAPDataset
 
 
 def _to_view_ids_list(view_id):
@@ -46,42 +42,14 @@ def optimize(train_dataset, eval_dataset, renderer, renderer_type, model_params,
     pose_optimize = training_params.get("pose_optimize", False)
     pose_refiner = None
 
-    # dataloader definition
-    preload = bool(training_params.get("preload", False))
-    preload_device = str(training_params.get("preload_device", "cpu")).lower()
-    gpu_preload = preload and preload_device.startswith("cuda")
-    if gpu_preload:
-        dataloader = torch.utils.data.DataLoader(
-            dataset=train_dataset,
-            batch_size=1,
-            shuffle=True,
-            num_workers=0,
-            pin_memory=False,
-            persistent_workers=False,
-            drop_last=False,
-            collate_fn=collate_single_view,
-        )
-    elif preload:
-        dataloader = torch.utils.data.DataLoader(
-            dataset=train_dataset,
-            batch_size=1,
-            shuffle=True,
-            num_workers=0,
-            pin_memory=True,
-            drop_last=False,
-            collate_fn=collate_single_view,
-        )
-    else:
-        dataloader = torch.utils.data.DataLoader(
-            dataset=train_dataset,
-            batch_size=1,
-            shuffle=True,
-            num_workers=4,
-            pin_memory=True,
-            persistent_workers=True,
-            drop_last=False,
-            collate_fn=collate_single_view,
-        )
+    dataloader = create_dataloader(
+        dataset=train_dataset,
+        batch_size=1,
+        shuffle=True,
+        num_workers=4,
+        preload=training_params.get("preload", False),
+        preload_device=training_params.get("preload_device", "cpu"),
+    )
     data_iter = infinite_dataloader(dataloader)
 
     # gaussian model initialization
@@ -116,15 +84,13 @@ def optimize(train_dataset, eval_dataset, renderer, renderer_type, model_params,
 
         # update scheduler learning rates
         gaussians.update_learning_rate(iteration)
-        pose_refiner.pose_scheduler.step() if pose_refiner and pose_refiner.pose_scheduler else None
 
         view_id, view_data = next(data_iter)
         
         extrinsic = view_data["extrinsic"].to(device, non_blocking=True)
-        render_kwargs = {}
         if pose_refiner is not None:
             view_ids_list = _to_view_ids_list(view_id)
-            extrinsic, render_kwargs = pose_refiner.refine_pose(extrinsic, view_ids_list, iteration)
+            extrinsic = pose_refiner.refine_pose(extrinsic, view_ids_list, iteration)
         intrinsic = view_data["intrinsic"].to(device, non_blocking=True)
         image_height, image_width = view_data["height"], view_data["width"]
         image_gt = view_data["image"][0].to(device, non_blocking=True)

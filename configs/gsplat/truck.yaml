@@ -36,11 +36,10 @@ training_params:
   pose_updater_params:
     init: "zero"
   pose_optimizer_params:
-    lr: 0.00001
-    reg: 0.000001
-    start_iter: 2000
-    end_iter: 25000
-    gamma_final_ratio: 0.01
+    lr: 1e-5
+    reg: 1e-6
+    start_iter: 0
+    end_iter: 30000
 
 renderer_params:
   renderer_type: "gsplat"

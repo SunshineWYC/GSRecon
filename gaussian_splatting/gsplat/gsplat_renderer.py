@@ -140,25 +140,24 @@ class GSplatPoseRefiner:
             self.pose_updater.zero_init()
 
         pose_optimizer_params = pose_optimizer_params or {}
-        self.start_iter = max(1, int(pose_optimizer_params.get("start_iter", 5000)))
-        self.end_iter = int(pose_optimizer_params.get("end_iter", 25000))
+
         lr = float(pose_optimizer_params.get("lr", 1e-5))
         reg = float(pose_optimizer_params.get("reg", 1e-6))
-        self.gamma_final_ratio = float(pose_optimizer_params.get("gamma_final_ratio", 0.01))
-
         self.pose_optimizer = torch.optim.Adam(self.pose_updater.parameters(), lr=lr, weight_decay=reg)
 
+        self.start_iter = max(1, int(pose_optimizer_params.get("start_iter", 0)))
+        self.end_iter = int(pose_optimizer_params.get("end_iter", total_iters))
         effective_end = min(self.end_iter, int(total_iters))
         self.update_steps = max(0, effective_end - self.start_iter + 1)
         if self.update_steps > 0:
-            gamma = self.gamma_final_ratio ** (1.0 / self.update_steps)
+            gamma = 0.01 ** (1.0 / self.update_steps)
             self.pose_scheduler = torch.optim.lr_scheduler.ExponentialLR(self.pose_optimizer, gamma=gamma)
         else:
             self.pose_scheduler = None
 
     def refine_pose(self, extrinsic_w2c: Tensor, view_ids, iteration: int):
         if iteration < self.start_iter:
-            return extrinsic_w2c, {}
+            return extrinsic_w2c
 
         camtoworld = torch.linalg.inv(extrinsic_w2c)
         if iteration <= self.end_iter:
@@ -166,7 +165,7 @@ class GSplatPoseRefiner:
         else:
             with torch.no_grad():
                 camtoworld = self.pose_updater(camtoworld, view_ids)
-        return torch.linalg.inv(camtoworld), {}
+        return torch.linalg.inv(camtoworld)
 
     def step(self, iteration: int):
         if self.start_iter <= iteration <= self.end_iter and self.update_steps > 0:
