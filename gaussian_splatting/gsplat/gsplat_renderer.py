@@ -5,7 +5,7 @@ import torch.nn.functional as F
 
 
 class GSplatRenderer:
-    def __init__(self, render_mode="RGB+ED", camera_model="pinhole", absgrad=True, **kwargs):
+    def __init__(self, render_mode="RGB", camera_model="pinhole", absgrad=True, **kwargs):
         self.render_mode = render_mode
         self.camera_model = camera_model
         self.absgrad = absgrad
@@ -49,7 +49,7 @@ class GSplatRenderer:
         )
 
         image_rendered = render_colors[0, :, :, :3].permute(2, 0, 1)
-        depth_rendered = render_colors[0, :, :, 3]
+        depth_rendered = render_colors[0, :, :, 3] if self.render_mode == "RGB+ED" else None
 
         return image_rendered, depth_rendered, info
 

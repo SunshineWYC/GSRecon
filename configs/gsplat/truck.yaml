@@ -1,20 +1,20 @@
 scene:
   data_path: "data/truck/"
   output_path: "results/gsplat/truck/"
-  exp_name: "exp_002"
+  exp_name: "exp_debug"
   type: "colmap"
 
 training_params:
   preload: True  # False:disk / True:cpu/cuda
-  preload_device: "cpu"  # "cuda:0" / "cpu"
+  preload_device: "cuda:0"  # "cuda:0" / "cpu"
   preload_dtype: "fp32"
   iterations: 30000
-  position_lr_init: 0.00008
+  position_lr_init: 0.00016
   position_lr_final: 0.0000016
   position_lr_delay_mult: 0.01
   position_lr_max_steps: 30000
   feature_lr: 0.0025
-  opacity_lr: 0.025
+  opacity_lr: 0.05
   scaling_lr: 0.005
   rotation_lr: 0.001
   lambda_dssim: 0.2
@@ -25,13 +25,14 @@ training_params:
   densify_until_iter: 15000
   densify_grad_threshold: 0.0004
   percent_dense: 0.01
+
   log: False
   log_interval: 100
   image_log_interval: 500
   eval: False
   eval_split_interval: 8
   eval_interval: 3000
-  pose_optimize: True
+  pose_optimize: False
   pose_updater_params:
     init: "zero"
   pose_optimizer_params:

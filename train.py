@@ -5,16 +5,17 @@ import time
 import torch
 import shutil
 import numpy as np
+import torch.nn.functional as F
 from tqdm import tqdm
 from munch import munchify
 from argparse import ArgumentParser
 from utils.config_utils import load_config
-from renderer import create_renderer, create_pose_refiner
+from gaussian_splatting import create_renderer, create_pose_refiner
 from utils.utils import infinite_dataloader, load_pcdfile, collate_single_view
 from utils.eval_utils import evaluate_gaussian_photometric
 from torch.utils.tensorboard import SummaryWriter
-from gaussian_splatting.gaussian_model import GaussianModel
-from gaussian_splatting.utils.loss_utils import l1_loss
+from gaussian_splatting.gsplat.gaussian_model import GaussianModel
+from utils.loss_utils import l1_loss
 from fused_ssim import fused_ssim as fast_ssim
 from datasets.colmap_loader import COLMAPSceneInfo, COLMAPDataset
 from datasets.colmap_reader import (
@@ -113,6 +114,7 @@ def optimize(train_dataset, eval_dataset, renderer, renderer_type, model_params,
         gaussians.update_learning_rate(iteration)
         if iteration % 1000 == 0:
             gaussians.oneupSHdegree()
+        densify_rate_current = 1.0
 
         view_id, view_data = next(data_iter)
         
@@ -122,7 +124,6 @@ def optimize(train_dataset, eval_dataset, renderer, renderer_type, model_params,
             view_ids_list = _to_view_ids_list(view_id)
             extrinsic, render_kwargs = pose_refiner.refine_pose(extrinsic, view_ids_list, iteration)
         intrinsic = view_data["intrinsic"].to(device, non_blocking=True)
-        image_height, image_width = view_data["height"], view_data["width"]
         image_gt = view_data["image"][0].to(device, non_blocking=True)
 
         image_rendered, depth_rendered, info = renderer.render(
@@ -137,8 +138,8 @@ def optimize(train_dataset, eval_dataset, renderer, renderer_type, model_params,
         )
 
         # calculate loss
-        loss_l1_color = l1_loss(image_rendered, image_gt)
-        loss_ssim = 1.0 - fast_ssim(image_rendered.unsqueeze(0), image_gt.unsqueeze(0))
+        loss_l1_color = l1_loss(image_rendered, image_gt_render)
+        loss_ssim = 1.0 - fast_ssim(image_rendered.unsqueeze(0), image_gt_render.unsqueeze(0))
         loss_color = (1.0 - training_params.lambda_dssim) * loss_l1_color + training_params.lambda_dssim * loss_ssim
 
         loss = loss_color
@@ -152,47 +153,33 @@ def optimize(train_dataset, eval_dataset, renderer, renderer_type, model_params,
                 pose_refiner.step(iteration)
 
             # adaptive density control: densification and prune
-            if renderer_type == "gsplat":
-                if iteration < training_params.densify_until_iter:
-                    visible_gaussian_ids = info["gaussian_ids"]
-                    max_radii2D = info["radii"].max(dim=1).values
-                    gaussians.max_radii2D[visible_gaussian_ids] = torch.max(gaussians.max_radii2D[visible_gaussian_ids], max_radii2D)
+            if iteration < training_params.densify_until_iter:
+                visible_gaussian_ids = info["gaussian_ids"]
+                max_radii2D = info["radii"].max(dim=1).values
+                gaussians.max_radii2D[visible_gaussian_ids] = torch.max(gaussians.max_radii2D[visible_gaussian_ids], max_radii2D)
 
-                    gaussians.add_densification_stats_gsplat_packed(info)
-                    if iteration > training_params.densify_from_iter and iteration % training_params.densification_interval == 0:
-                        size_threshold = 20 if iteration > training_params.opacity_reset_interval else None
-                        gaussians.densify_and_prune(
-                            training_params.densify_grad_threshold,
-                            0.005,
-                            scene_extent,
-                            size_threshold,
-                            model_params.max_num_gaussians,
-                        )
+                gaussians.add_densification_stats_gsplat_packed(info)
+                if iteration > training_params.densify_from_iter and iteration % training_params.densification_interval == 0:
+                    size_threshold = 20 if iteration > training_params.opacity_reset_interval else None
+                    densify_rate_current = scheduler.get_densify_rate(
+                        iteration=iteration,
+                        cur_n_gaussian=gaussians.get_xyz.shape[0],
+                        cur_scale=render_scale,
+                    ) if scheduler is not None else 1.0
+                    momentum_add = gaussians.prune_and_densify_topk(
+                        training_params.densify_grad_threshold,
+                        0.005,
+                        scene_extent,
+                        size_threshold,
+                        model_params.max_num_gaussians,
+                        densify_rate=densify_rate_current,
+                    )
+                    if scheduler is not None:
+                        scheduler.update_momentum(momentum_add)
+                        n_max_current = int(scheduler.max_n_gaussian)
 
-                    if iteration % training_params.opacity_reset_interval == 0:
-                        gaussians.reset_opacity()
-
-            elif renderer_type == "fastgs":
-                if iteration < training_params.densify_until_iter:
-                    radii = info["radii"]
-                    visible_mask = info["visibility_filter"]
-                    gaussians.max_radii2D[visible_mask] = torch.max(gaussians.max_radii2D[visible_mask], radii[visible_mask])
-                    gaussians.add_densification_stats_grad(info["means2d"], visible_mask)
-
-                    if iteration > training_params.densify_from_iter and iteration % training_params.densification_interval == 0:
-                        size_threshold = 20 if iteration > training_params.opacity_reset_interval else None
-                        gaussians.densify_and_prune(
-                            training_params.densify_grad_threshold,
-                            0.005,
-                            scene_extent,
-                            size_threshold,
-                            model_params.max_num_gaussians,
-                        )
-
-                    if iteration % training_params.opacity_reset_interval == 0:
-                        gaussians.reset_opacity()
-            else:
-                pass
+                if iteration % training_params.opacity_reset_interval == 0:
+                    gaussians.reset_opacity()
 
         # logging
         if logger:
@@ -206,7 +193,7 @@ def optimize(train_dataset, eval_dataset, renderer, renderer_type, model_params,
             # training image logging
             if iteration % training_params.image_log_interval == 0:
                 logger.add_image("image/image_rendered", image_rendered, iteration)
-                logger.add_image("image/image_gt", image_gt, iteration)
+                logger.add_image("image/image_gt", image_gt_render, iteration)
 
             # evaluation on dataset and metrics logging
             if training_params.get("eval", False):
@@ -216,7 +203,13 @@ def optimize(train_dataset, eval_dataset, renderer, renderer_type, model_params,
                     logger.add_scalar("Metrics/eval_ssim", sum(ssim_scores.values()) / len(ssim_scores), iteration)
                     logger.add_scalar("Metrics/eval_lpips", sum(lpips_scores.values()) / len(lpips_scores), iteration)
 
-        pbar.set_postfix(loss=f"{loss.item():.4f}", num_gs=f"{gaussians.get_xyz.shape[0]}")
+        pbar.set_postfix(
+            loss=f"{loss.item():.4f}",
+            num_gs=f"{gaussians.get_xyz.shape[0]}",
+            R=f"{render_scale}",
+            densify_rate=f"{densify_rate_current:.3f}",
+            N_MAX=f"{n_max_current}",
+        )
 
     # save gaussian model
     t2 = time.perf_counter()
@@ -253,7 +246,7 @@ def optimize(train_dataset, eval_dataset, renderer, renderer_type, model_params,
 
 if __name__ == "__main__":
     parser = ArgumentParser(description="Spatial block training script parameters")
-    parser.add_argument("--config", type=str, default="configs/fastgs/truck.yaml", help="Path to the configuration file")
+    parser.add_argument("--config", type=str, default="configs/gsplat/truck.yaml", help="Path to the configuration file")
     args = parser.parse_args(sys.argv[1:])
     config = load_config(args.config)
 

@@ -9,8 +9,8 @@ import torch
 
 from datasets.colmap_loader import COLMAPSceneInfo, COLMAPDataset
 from datasets.colmap_reader import read_extrinsics_binary, read_extrinsics_text, qvec2rotmat
-from gaussian_splatting.gaussian_model import GaussianModel
-from renderer import create_renderer
+from gaussian_splatting.gsplat.gaussian_model import GaussianModel
+from gaussian_splatting import create_renderer
 from utils.config_utils import load_config
 from utils.eval_utils import evaluate_gaussian_photometric
 

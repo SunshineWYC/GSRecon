@@ -1,26 +1,13 @@
-#
-# Copyright (C) 2023, Inria
-# GRAPHDECO research group, https://team.inria.fr/graphdeco
-# All rights reserved.
-#
-# This software is free for non-commercial, research and evaluation use 
-# under the terms of the LICENSE.md file.
-#
-# For inquiries contact  george.drettakis@inria.fr
-#
-
 import os
 import json
 import torch
 import numpy as np
 from torch import nn
-from gaussian_splatting.utils.sh_utils import RGB2SH
+from utils.sh_utils import RGB2SH
 from simple_knn._C import distCUDA2
-from gaussian_splatting.utils.system_utils import mkdir_p
 from plyfile import PlyData, PlyElement
-from gaussian_splatting.utils.graphics_utils import BasicPointCloud
-from gaussian_splatting.utils.general_utils import strip_symmetric, build_scaling_rotation
-from gaussian_splatting.utils.general_utils import inverse_sigmoid, get_expon_lr_func, build_rotation
+from utils.graphics_utils import BasicPointCloud
+from utils.general_utils import strip_symmetric, build_scaling_rotation, inverse_sigmoid, get_expon_lr_func, build_rotation
 
 
 class GaussianModel:
@@ -177,11 +164,6 @@ class GaussianModel:
         self._opacity = nn.Parameter(opacities.requires_grad_(True))
         self.max_radii2D = torch.zeros((self.get_xyz.shape[0]), device=self.device)
 
-        # self.exposure_mapping = {cam_info.image_name: idx for idx, cam_info in enumerate(cam_infos)}
-        # self.pretrained_exposures = None
-        # exposure = torch.eye(3, 4, device=self.device)[None].repeat(len(cam_infos), 1, 1)
-        # self._exposure = nn.Parameter(exposure.requires_grad_(True))
-
     def training_setup(self, training_args):
         self.optimizer_type = training_args.get("optimizer_type", "default")
         self.percent_dense = training_args.percent_dense
@@ -218,12 +200,6 @@ class GaussianModel:
                                                     lr_delay_mult=training_args.position_lr_delay_mult,
                                                     max_steps=training_args.position_lr_max_steps)
         
-        # self.exposure_optimizer = torch.optim.Adam([self._exposure])
-        # self.exposure_scheduler_args = get_expon_lr_func(training_args.exposure_lr_init, training_args.exposure_lr_final,
-        #                                                 lr_delay_steps=training_args.exposure_lr_delay_steps,
-        #                                                 lr_delay_mult=training_args.exposure_lr_delay_mult,
-        #                                                 max_steps=training_args.iterations)
-
     def update_learning_rate(self, iteration):
         ''' Learning rate scheduling per step '''
         # if self.pretrained_exposures is None:
@@ -251,7 +227,7 @@ class GaussianModel:
         return l
 
     def save_ply(self, path):
-        mkdir_p(os.path.dirname(path))
+        os.makedirs(os.path.dirname(path), exist_ok=True)
 
         xyz = self._xyz.detach().cpu().numpy()
         normals = np.zeros_like(xyz)
