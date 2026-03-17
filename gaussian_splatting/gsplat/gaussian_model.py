@@ -484,7 +484,6 @@ class GaussianModel:
         self.xyz_gradient_accum[visible_mask] += torch.norm(grads, dim=-1, keepdim=True)
         self.denom[visible_mask] += 1
 
-
     # vanilla 3DGS densification strategy
     def add_densification_stats_grad(self, viewspace_point_tensor, update_filter):
         self.xyz_gradient_accum[update_filter] += torch.norm(viewspace_point_tensor.grad[update_filter,:2], dim=-1, keepdim=True)

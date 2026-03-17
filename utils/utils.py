@@ -59,7 +59,7 @@ def collate_single_view(batch):
     return view_id, collated
 
 
-def create_dataloader(dataset, batch_size=1, shuffle=False, num_workers=4, preload=False, preload_device="cpu"):
+def create_dataloader(dataset, batch_size=1, shuffle=False, num_workers=8, preload=False, preload_device="cpu"):
     """
     Encapsulate DataLoader creation logic and optimize parameters based on preloading settings.
     
@@ -85,7 +85,7 @@ def create_dataloader(dataset, batch_size=1, shuffle=False, num_workers=4, prelo
     # Optimized configuration for CPU preloading
     elif preload:
         nw, pm, pw = 0, True, False
-    # Regular loading configuration
+    # Regular loading configuration from disk
     else:
         nw, pm, pw = num_workers, True, (num_workers > 0)
 

@@ -205,7 +205,7 @@ python3 train.py --config configs/gsplat/truck.yaml
 
 - `image_scale`：图像缩放比例。
 - `scene_scale`：场景尺度缩放。
-- `spherical_harmonics` / `sh_degree`：SH 颜色建模配置。
+- `sh_degree`：SH 颜色建模阶数；`0` 表示关闭 SH，仅使用 DC 颜色项。
 - `max_num_gaussians`：高斯数量上限。
 
 配置示例见 [configs/gsplat/truck.yaml](/home/wyc/Workspace/GSRecon/configs/gsplat/truck.yaml)。

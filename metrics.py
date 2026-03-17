@@ -15,6 +15,18 @@ from utils.config_utils import load_config
 from utils.eval_utils import evaluate_gaussian_photometric
 
 
+def _resolve_sh_degree(model_params):
+    if "spherical_harmonics" in model_params:
+        raise ValueError(
+            "`model_params.spherical_harmonics` has been removed. "
+            "Use `model_params.sh_degree` only, and set it to 0 to disable SH."
+        )
+    sh_degree = int(model_params.get("sh_degree", 0))
+    if sh_degree < 0:
+        raise ValueError(f"`model_params.sh_degree` must be >= 0, got {sh_degree}.")
+    return sh_degree
+
+
 def _select_gaussian_ply(gaussians_dirpath: str) -> str:
     if not os.path.isdir(gaussians_dirpath):
         raise FileNotFoundError(f"gaussians directory not found: {gaussians_dirpath}")
@@ -221,9 +233,7 @@ if __name__ == "__main__":
 
     device = torch.device(args.device)
 
-    spherical_harmonics = bool(model_params.get("spherical_harmonics", True))
-    sh_degree_cfg = int(model_params.get("sh_degree", 0))
-    sh_degree = sh_degree_cfg if spherical_harmonics else 0
+    sh_degree = _resolve_sh_degree(model_params)
     gaussians = GaussianModel(sh_degree=sh_degree, device=device)
     gaussians.load_ply(ply_path)
 

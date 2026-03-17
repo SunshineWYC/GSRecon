@@ -23,6 +23,9 @@ from datasets.colmap_reader import read_colmap_model, write_colmap_text
 
 
 def _to_view_ids_list(view_id):
+    """
+    convert different dtype view_id to int list
+    """
     if isinstance(view_id, torch.Tensor):
         return [int(v) for v in view_id.reshape(-1).tolist()]
     if isinstance(view_id, (list, tuple)):
@@ -50,6 +53,7 @@ def optimize(train_dataset, eval_dataset, renderer, renderer_type, model_params,
     pose_optimize = training_params.get("pose_optimize", False)
     pose_refiner = None
 
+    print("Num train views: ", len(train_dataset))
     dataloader = create_dataloader(
         dataset=train_dataset,
         batch_size=1,
@@ -63,7 +67,7 @@ def optimize(train_dataset, eval_dataset, renderer, renderer_type, model_params,
     # gaussian model initialization
     gaussians = GaussianModel(sh_degree=model_params.sh_degree, device=device)
     pcd = load_pcdfile(pcd_filepath, scene_scale=model_params.get("scene_scale", 1.0))
-    scene_extent = 5.0
+    scene_extent = 20.0
     gaussians.create_from_pcd(pcd, scene_extent=scene_extent)
     gaussians.training_setup(training_params)
 
@@ -267,7 +271,7 @@ def optimize(train_dataset, eval_dataset, renderer, renderer_type, model_params,
 
 if __name__ == "__main__":
     parser = ArgumentParser(description="Spatial block training script parameters")
-    parser.add_argument("--config", type=str, default="configs/gsplat/truck.yaml", help="Path to the configuration file")
+    parser.add_argument("--config", type=str, default="configs/gsplat/suburb.yaml", help="Path to the configuration file")
     args = parser.parse_args(sys.argv[1:])
     config = load_config(args.config)
 
@@ -279,7 +283,6 @@ if __name__ == "__main__":
     model_params = munchify(config.get("model_params", {}))
     training_params = munchify(config.get("training_params", {}))
     renderer_params = munchify(config.get("renderer_params", {}))
-    model_params.sh_degree = model_params.get("sh_degree", 0) if model_params.spherical_harmonics else 0
 
     # renderer definition
     renderer_cfg = dict(renderer_params)
@@ -289,6 +292,7 @@ if __name__ == "__main__":
     # scene info and pcd filepath
     scene_info = COLMAPSceneInfo(config["scene"]["data_path"])
     pcd_filepath = scene_info.pcd_filepath
+    train_split = "train" if bool(training_params.get("eval", False)) else None
     train_dataset = COLMAPDataset(
         views_info=scene_info.views_info,
         image_scale=model_params.get("image_scale", 1.0),
@@ -296,10 +300,10 @@ if __name__ == "__main__":
         preload=training_params.get("preload", False),
         preload_device=training_params.get("preload_device", "cpu"),
         preload_dtype=training_params.get("preload_dtype", "fp32"),
-        split="train",
+        split=train_split,
         eval_split_interval=training_params.get("eval_split_interval", 8),
     )
-    if training_params.get("eval", False):
+    if bool(training_params.get("eval", False)):
         eval_dataset = COLMAPDataset(
             views_info=scene_info.views_info,
             image_scale=model_params.get("image_scale", 1.0),
