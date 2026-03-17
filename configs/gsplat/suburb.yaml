@@ -1,13 +1,13 @@
 scene:
-  data_path: "data/truck/"
-  output_path: "results/gsplat/truck/"
-  exp_name: "exp_001"
+  data_path: "data/suburb"
+  output_path: "results/gsplat/suburb/"
+  exp_name: "exp_debug"
   type: "colmap"
 
 training_params:
   preload: True  # False:disk / True:cpu/cuda
   preload_device: "cpu"  # "cuda:0" / "cpu"
-  preload_dtype: "fp16" # fp32 / fp16
+  preload_dtype: "fp16"
   iterations: 30000
   position_lr_init: 0.00016
   position_lr_final: 0.0000016
@@ -24,11 +24,11 @@ training_params:
   log: False
   log_interval: 100
   image_log_interval: 500
-  eval: False
+  eval: True
   eval_split_interval: 8
   eval_interval: 2000
 
-  pose_optimize: True
+  pose_optimize: False
   pose_updater_params:
     init: "zero"
   pose_optimizer_params:
@@ -56,8 +56,8 @@ renderer_params:
   renderer_type: "gsplat"
 
 model_params:
-  image_scale: 1.0
+  image_scale: 0.25
   scene_scale: 1.0
   spherical_harmonics: True
-  sh_degree: 3
-  max_num_gaussians: 2_000_000
+  sh_degree: 1
+  max_num_gaussians: 8_000_000

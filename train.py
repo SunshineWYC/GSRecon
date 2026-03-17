@@ -113,9 +113,13 @@ def optimize(train_dataset, eval_dataset, renderer, renderer_type, model_params,
             device=device
         )
 
+        # Keep fp16 preload for storage, but normalize image math to fp32 for loss stability and kernel compatibility.
+        image_rendered_f32 = image_rendered.float()
+        image_gt_f32 = image_gt.float()
+
         # calculate loss
-        loss_l1_color = l1_loss(image_rendered, image_gt)
-        loss_ssim = 1.0 - fast_ssim(image_rendered.unsqueeze(0), image_gt.unsqueeze(0))
+        loss_l1_color = l1_loss(image_rendered_f32, image_gt_f32)
+        loss_ssim = 1.0 - fast_ssim(image_rendered_f32.unsqueeze(0), image_gt_f32.unsqueeze(0))
         loss = (1.0 - training_params.lambda_dssim) * loss_l1_color + training_params.lambda_dssim * loss_ssim
 
         # MCMC Regularization

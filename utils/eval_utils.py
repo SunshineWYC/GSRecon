@@ -98,11 +98,15 @@ def evaluate_gaussian_photometric(
             device=device,
         )
 
-        psnr_score = psnr(image_rendered, image_gt)
-        ssim_score = fast_ssim(image_rendered.unsqueeze(0), image_gt.unsqueeze(0))
+        # Keep fp16 preload as a storage optimization, but run metrics in fp32.
+        image_rendered_f32 = image_rendered.float()
+        image_gt_f32 = image_gt.float()
+
+        psnr_score = psnr(image_rendered_f32, image_gt_f32)
+        ssim_score = fast_ssim(image_rendered_f32.unsqueeze(0), image_gt_f32.unsqueeze(0))
         if lpips_flag:
             # Input tensors are in [0, 1], normalize=True maps to [-1, 1] per official LPIPS usage.
-            lpips_score = lpips_model(image_rendered.unsqueeze(0), image_gt.unsqueeze(0), normalize=True)
+            lpips_score = lpips_model(image_rendered_f32.unsqueeze(0), image_gt_f32.unsqueeze(0), normalize=True)
         else:
             lpips_score = torch.tensor(0.0)
 

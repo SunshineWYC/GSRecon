@@ -217,12 +217,15 @@ class COLMAPDataset(torch.utils.data.Dataset):
                 idx = futures[future]
                 views_data[idx] = future.result()
 
-        if self.preload_device.type == "cuda":
-            if self.preload_dtype not in {"fp32", "fp16"}:
-                raise ValueError(f"Unsupported preload_dtype: {self.preload_dtype}. Expected 'fp32' or 'fp16'.")
-            image_dtype = torch.float32 if self.preload_dtype == "fp32" else torch.float16
+        if self.preload_dtype not in {"fp32", "fp16"}:
+            raise ValueError(
+                f"Unsupported preload_dtype: {self.preload_dtype}. Expected 'fp32' or 'fp16'."
+            )
+        image_dtype = torch.float32 if self.preload_dtype == "fp32" else torch.float16
+
+        if self.preload_device.type in {"cpu", "cuda"}:
             for idx, view_data in enumerate(views_data):
-                # Move only tensors required by training/eval; keep metadata as python objects.
+                # Keep geometry tensors in fp32, but allow image/mask storage dtype to follow preload_dtype.
                 view_data["image"] = view_data["image"].to(self.preload_device, dtype=image_dtype, non_blocking=False)
                 view_data["mask"] = view_data["mask"].to(self.preload_device, dtype=image_dtype, non_blocking=False)
                 view_data["intrinsic"] = view_data["intrinsic"].to(self.preload_device, dtype=torch.float32, non_blocking=False)
