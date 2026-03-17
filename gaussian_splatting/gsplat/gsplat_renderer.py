@@ -180,7 +180,7 @@ class GSplatPoseRefiner:
             for view_id, view_info in zip(train_dataset.view_ids, train_dataset.views_info_list):
                 w2c = torch.tensor(view_info.extrinsic, dtype=torch.float32, device=device).unsqueeze(0)
                 w2c[..., :3, 3] *= scene_scale
-                w2c_ref, _ = self.refine_pose(w2c, [int(view_id)], self.end_iter + 1)
+                w2c_ref = self.refine_pose(w2c, [int(view_id)], self.end_iter + 1)
                 w2c_ref = w2c_ref.squeeze(0)
                 w2c_ref[:3, 3] /= scene_scale
                 refined_train_w2c[int(view_id)] = w2c_ref.detach().cpu().numpy()

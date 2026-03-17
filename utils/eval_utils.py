@@ -2,12 +2,10 @@ import torch
 import torch.nn.functional as F
 from tqdm import tqdm
 from utils.image_utils import psnr
-from utils.lpipsPyTorch.modules.lpips import LPIPS
 import lpips
-from gsplat.rendering import rasterization
 from utils.loss_utils import create_window
 from fused_ssim import fused_ssim as fast_ssim
-from utils.utils import create_dataloader, collate_single_view
+from utils.utils import create_dataloader
 
 
 def ssim_mask(img1, img2, mask, window_size=11):
@@ -49,7 +47,15 @@ def ssim_mask(img1, img2, mask, window_size=11):
 
 
 @torch.no_grad()
-def evaluate_gaussian_photometric(gaussians, dataset, renderer, lpips_flag=True, device="cuda:0"):
+def evaluate_gaussian_photometric(
+    gaussians,
+    dataset,
+    renderer,
+    lpips_flag=True,
+    device="cuda:0",
+    pose_refiner=None,
+    pose_iteration=None,
+):
     dataloader = create_dataloader(
         dataset=dataset,
         batch_size=1,
@@ -63,7 +69,7 @@ def evaluate_gaussian_photometric(gaussians, dataset, renderer, lpips_flag=True,
     psnr_scores, ssim_scores, lpips_scores = {}, {}, {}
     lpips_model = None
     if lpips_flag:
-        lpips_model = LPIPS(net_type="vgg", version="0.1").to(device)
+        lpips_model = lpips.LPIPS(net="vgg", version="0.1").to(device)
         lpips_model.eval()
 
     for idx in tqdm(range(len(dataset)), desc="Evaluating...", unit="view"):
@@ -71,6 +77,13 @@ def evaluate_gaussian_photometric(gaussians, dataset, renderer, lpips_flag=True,
         view_id = view_id.item() if isinstance(view_id, torch.Tensor) else view_id
 
         extrinsic = view_data["extrinsic"].to(device, non_blocking=True)
+        if pose_refiner is not None:
+            iter_for_pose = (
+                int(pose_iteration)
+                if pose_iteration is not None
+                else int(getattr(pose_refiner, "end_iter", 0)) + 1
+            )
+            extrinsic = pose_refiner.refine_pose(extrinsic, [int(view_id)], iter_for_pose)
         intrinsic = view_data["intrinsic"].to(device, non_blocking=True)
         image_height, image_width = view_data["height"], view_data["width"]
         image_gt = view_data["image"][0].to(device, non_blocking=True)  # [3, H, W]
@@ -88,7 +101,8 @@ def evaluate_gaussian_photometric(gaussians, dataset, renderer, lpips_flag=True,
         psnr_score = psnr(image_rendered, image_gt)
         ssim_score = fast_ssim(image_rendered.unsqueeze(0), image_gt.unsqueeze(0))
         if lpips_flag:
-            lpips_score = lpips_model(image_rendered.unsqueeze(0), image_gt.unsqueeze(0))
+            # Input tensors are in [0, 1], normalize=True maps to [-1, 1] per official LPIPS usage.
+            lpips_score = lpips_model(image_rendered.unsqueeze(0), image_gt.unsqueeze(0), normalize=True)
         else:
             lpips_score = torch.tensor(0.0)
 

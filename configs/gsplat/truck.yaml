@@ -1,7 +1,7 @@
 scene:
   data_path: "data/truck/"
   output_path: "results/gsplat/truck/"
-  exp_name: "exp_002"
+  exp_name: "exp_006"
   type: "colmap"
 
 training_params:
@@ -19,19 +19,15 @@ training_params:
   rotation_lr: 0.001
   lambda_dssim: 0.2
   optimizer_type: "default" # "default" / sparse_adam" / "selective_adam"
-  opacity_reset_interval: 3000
-  densification_interval: 100
-  densify_from_iter: 500
-  densify_until_iter: 15000
-  densify_grad_threshold: 0.0004
   percent_dense: 0.01
 
   log: False
   log_interval: 100
   image_log_interval: 500
-  eval: False
+  eval: True
   eval_split_interval: 8
-  eval_interval: 3000
+  eval_interval: 2000
+
   pose_optimize: True
   pose_updater_params:
     init: "zero"
@@ -41,6 +37,21 @@ training_params:
     start_iter: 0
     end_iter: 30000
 
+  densification_params:
+    strategy: "mcmc" # "absgrad" / "mcmc"
+    densification_interval: 100
+    densify_from_iter: 500
+    densify_until_iter: 15000
+    min_opacity: 0.005
+    opacity_reset_interval: 3000
+    mcmc_params:
+      opacity_reg: 0.01
+      scale_reg: 0.01
+      noise_lr: 5e5
+      new_gaussian_ratio: 1.03
+    absgrad_params:
+      densify_grad_threshold: 0.0004
+
 renderer_params:
   renderer_type: "gsplat"
 
@@ -49,4 +60,4 @@ model_params:
   scene_scale: 1.0
   spherical_harmonics: True
   sh_degree: 3
-  max_num_gaussians: 10000000
+  max_num_gaussians: 2_000_000

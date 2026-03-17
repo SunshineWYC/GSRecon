@@ -16,8 +16,10 @@ from utils.eval_utils import evaluate_gaussian_photometric
 from torch.utils.tensorboard import SummaryWriter
 from gaussian_splatting.gsplat.gaussian_model import GaussianModel
 from utils.loss_utils import l1_loss
+from utils.general_utils import build_scaling_rotation
 from fused_ssim import fused_ssim as fast_ssim
-from datasets.colmap_loader import read_colmap_model, write_colmap_text, COLMAPSceneInfo, COLMAPDataset
+from datasets.colmap_loader import COLMAPSceneInfo, COLMAPDataset
+from datasets.colmap_reader import read_colmap_model, write_colmap_text
 
 
 def _to_view_ids_list(view_id):
@@ -26,6 +28,12 @@ def _to_view_ids_list(view_id):
     if isinstance(view_id, (list, tuple)):
         return [int(v) for v in view_id]
     return [int(view_id)]
+
+
+def _safe_mean_metric(scores):
+    if not scores:
+        return 0.0
+    return float(sum(scores.values()) / len(scores))
 
 
 def optimize(train_dataset, eval_dataset, renderer, renderer_type, model_params, training_params, device, output_dirpath, pcd_filepath):
@@ -83,7 +91,7 @@ def optimize(train_dataset, eval_dataset, renderer, renderer_type, model_params,
             gaussians.oneupSHdegree()
 
         # update scheduler learning rates
-        gaussians.update_learning_rate(iteration)
+        xyz_lr = gaussians.update_learning_rate(iteration)
 
         view_id, view_data = next(data_iter)
         
@@ -108,62 +116,115 @@ def optimize(train_dataset, eval_dataset, renderer, renderer_type, model_params,
         # calculate loss
         loss_l1_color = l1_loss(image_rendered, image_gt)
         loss_ssim = 1.0 - fast_ssim(image_rendered.unsqueeze(0), image_gt.unsqueeze(0))
-        loss_color = (1.0 - training_params.lambda_dssim) * loss_l1_color + training_params.lambda_dssim * loss_ssim
+        loss = (1.0 - training_params.lambda_dssim) * loss_l1_color + training_params.lambda_dssim * loss_ssim
 
-        loss = loss_color
+        # MCMC Regularization
+        if training_params.densification_params.strategy == "mcmc":
+            mcmc_cfg = training_params.densification_params.mcmc_params
+            loss = loss + mcmc_cfg.get("opacity_reg", 0.01) * torch.abs(gaussians.get_opacity).mean()
+            loss = loss + mcmc_cfg.get("scale_reg", 0.01) * torch.abs(gaussians.get_scaling).mean()
+
         loss.backward()
 
         with torch.no_grad():
             # Optimizer step for gaussians and pose_refiner
             gaussians.optimizer.step()
             gaussians.optimizer.zero_grad(set_to_none=True)
-            if pose_refiner is not None:
+            if pose_refiner is not None:    # pose_refiner step
                 pose_refiner.step(iteration)
 
             # adaptive density control: densification and prune
-            # accumulate densification stats
-            if iteration < training_params.densify_until_iter:
-                visible_gaussian_ids = info["gaussian_ids"]
-                max_radii2D = info["radii"].max(dim=1).values
-                gaussians.max_radii2D[visible_gaussian_ids] = torch.max(gaussians.max_radii2D[visible_gaussian_ids], max_radii2D)
-                gaussians.add_densification_stats_packed(info)
+            if training_params.densification_params.strategy == "absgrad":
+                # Absgrad densification strategy
+                if iteration < training_params.densification_params.densify_until_iter:  # accumulate stats
+                    visible_gaussian_ids = info["gaussian_ids"]
+                    max_radii2D = info["radii"].max(dim=1).values
+                    gaussians.max_radii2D[visible_gaussian_ids] = torch.max(gaussians.max_radii2D[visible_gaussian_ids], max_radii2D)
+                    gaussians.add_densification_stats_packed(info)
+                # Absgrad: perform densification, pruning and reset opacity
+                if training_params.densification_params.densify_from_iter < iteration < training_params.densification_params.densify_until_iter:
+                    if iteration % training_params.densification_params.densification_interval == 0:
+                        size_threshold = 20 if iteration > training_params.densification_params.opacity_reset_interval else None
+                        gaussians.densify_and_prune(
+                            training_params.densification_params.absgrad_params.densify_grad_threshold,
+                            training_params.densification_params.min_opacity,
+                            scene_extent,
+                            size_threshold,)
+                    if iteration % training_params.densification_params.opacity_reset_interval == 0:
+                        gaussians.reset_opacity()
+            elif training_params.densification_params.strategy == "mcmc":
+                # MCMC densification
+                if (iteration < training_params.densification_params.densify_until_iter
+                    and iteration > training_params.densification_params.densify_from_iter
+                    and iteration % training_params.densification_params.densification_interval == 0
+                ):
+                    dead_mask = (gaussians.get_opacity <= training_params.densification_params.min_opacity).squeeze(-1)
+                    gaussians.relocate_gs(dead_mask=dead_mask)
+                    gaussians.add_new_gs(
+                        cap_max=model_params.max_num_gaussians, 
+                        new_gaussian_ratio=training_params.densification_params.mcmc_params.new_gaussian_ratio)
+            else:
+                raise ValueError(f"Unsupported densification strategy: {training_params.densification_params.strategy}")
 
-            # perform densification, pruning and reset opacity
-            if training_params.densify_from_iter < iteration < training_params.densify_until_iter:
-                if iteration % training_params.densification_interval == 0:
-                    size_threshold = 20 if iteration > training_params.opacity_reset_interval else None
-                    gaussians.densify_and_prune(
-                        training_params.densify_grad_threshold,
-                        0.005,
-                        scene_extent,
-                        size_threshold,
-                        model_params.max_num_gaussians,
-                    )
-
-                if iteration % training_params.opacity_reset_interval == 0:
-                    gaussians.reset_opacity()
+            # MCMC noise SGLD addition
+            if training_params.densification_params.strategy == "mcmc":
+                def op_sigmoid(x, k=100, x0=0.995):
+                    return 1 / (1 + torch.exp(-k * (x - x0)))
+                
+                L = build_scaling_rotation(gaussians.get_scaling, gaussians.get_rotation)
+                actual_covariance = L @ L.transpose(1, 2)
+                
+                # Generate noise based on the current point positions
+                noise = (
+                    torch.randn_like(gaussians._xyz)
+                    * op_sigmoid(1 - gaussians.get_opacity)
+                    * float(training_params.densification_params.mcmc_params.noise_lr)
+                    * xyz_lr
+                )
+                # Scale noise by the local covariance (SGLD)
+                noise = torch.bmm(actual_covariance, noise.unsqueeze(-1)).squeeze(-1)
+                gaussians._xyz.add_(noise)
 
         # logging
         if logger:
             if iteration % training_params.log_interval == 0:
                 logger.add_scalar("Loss/loss_l1_color", loss_l1_color.item(), iteration)
                 logger.add_scalar("Loss/loss_ssim", loss_ssim.item(), iteration)
-                logger.add_scalar("Loss/loss_color", loss_color.item(), iteration)
                 logger.add_scalar("Loss/loss", loss.item(), iteration)
                 logger.add_scalar("Stats/num_gaussians", gaussians.get_xyz.shape[0], iteration)
             
             # training image logging
-            if iteration % training_params.image_log_interval == 0:
-                logger.add_image("image/image_rendered", image_rendered, iteration)
-                logger.add_image("image/image_gt", image_gt, iteration)
+            # if iteration % training_params.image_log_interval == 0:
+            #     logger.add_image("image/image_rendered", image_rendered, iteration)
+            #     logger.add_image("image/image_gt", image_gt, iteration)
 
             # evaluation on dataset and metrics logging
-            if training_params.get("eval", False):
-                if iteration == 1 or iteration % eval_interval == 0:
-                    psnr_scores, ssim_scores, lpips_scores = evaluate_gaussian_photometric(gaussians, eval_dataset, renderer, lpips_flag=True, device=device)
-                    logger.add_scalar("Metrics/eval_psnr", sum(psnr_scores.values()) / len(psnr_scores), iteration)
-                    logger.add_scalar("Metrics/eval_ssim", sum(ssim_scores.values()) / len(ssim_scores), iteration)
-                    logger.add_scalar("Metrics/eval_lpips", sum(lpips_scores.values()) / len(lpips_scores), iteration)
+            if training_params.get("eval", False) and (iteration == 1 or iteration % eval_interval == 0):
+                # Evaluate on train split with refined pose (if pose refinement is enabled).
+                train_psnr_scores, train_ssim_scores, train_lpips_scores = evaluate_gaussian_photometric(
+                    gaussians,
+                    train_dataset,
+                    renderer,
+                    lpips_flag=True,
+                    device=device,
+                    pose_refiner=pose_refiner,
+                    pose_iteration=iteration,
+                )
+                logger.add_scalar("Metrics/train_psnr", _safe_mean_metric(train_psnr_scores), iteration)
+                logger.add_scalar("Metrics/train_ssim", _safe_mean_metric(train_ssim_scores), iteration)
+                logger.add_scalar("Metrics/train_lpips", _safe_mean_metric(train_lpips_scores), iteration)
+
+                # Evaluate on val split with original poses.
+                eval_psnr_scores, eval_ssim_scores, eval_lpips_scores = evaluate_gaussian_photometric(
+                    gaussians,
+                    eval_dataset,
+                    renderer,
+                    lpips_flag=True,
+                    device=device,
+                )
+                logger.add_scalar("Metrics/eval_psnr", _safe_mean_metric(eval_psnr_scores), iteration)
+                logger.add_scalar("Metrics/eval_ssim", _safe_mean_metric(eval_ssim_scores), iteration)
+                logger.add_scalar("Metrics/eval_lpips", _safe_mean_metric(eval_lpips_scores), iteration)
 
         pbar.set_postfix(loss=f"{loss.item():.4f}", num_gs=f"{gaussians.get_xyz.shape[0]}")
 
