@@ -208,7 +208,7 @@ def evaluate_photometric(exp_dir, config, gaussians, device, splits):
 
 if __name__ == "__main__":
     parser = ArgumentParser(description="Evaluate a Gaussian reconstruction for a single experiment.")
-    parser.add_argument("--exp_dir", type=str, default="results/truck/exp_003", help="Experiment directory")
+    parser.add_argument("--exp_dir", type=str, default="results/gsplat/suburb/exp_001", help="Experiment directory")
     parser.add_argument("--device", type=str, default="cuda:0", help="Torch device string, e.g. cuda:0")
     parser.add_argument("--ply", type=str, default=None, help="Optional .ply path; default selects max iteration under gaussians/")
     parser.add_argument(

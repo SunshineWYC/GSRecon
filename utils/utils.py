@@ -16,6 +16,53 @@ def fetch_ply(path, scene_scale=1.0):
     return BasicPointCloud(points=positions, colors=colors, normals=normals)
 
 
+def save_pcdfile(pcd: BasicPointCloud, output_path: str) -> None:
+    if not output_path.endswith(".ply"):
+        raise ValueError(f"save_pcdfile only supports .ply output, got: {output_path}")
+
+    output_dir = os.path.dirname(output_path)
+    if output_dir:
+        os.makedirs(output_dir, exist_ok=True)
+
+    points = np.asarray(pcd.points, dtype=np.float32)
+    if points.ndim != 2 or points.shape[1] != 3:
+        raise ValueError(f"pcd.points must have shape (N, 3), got: {points.shape}")
+
+    colors = np.asarray(pcd.colors)
+    if colors.ndim != 2 or colors.shape[1] != 3 or colors.shape[0] != points.shape[0]:
+        raise ValueError(f"pcd.colors must have shape ({points.shape[0]}, 3), got: {colors.shape}")
+    if np.issubdtype(colors.dtype, np.floating):
+        colors = np.clip(colors, 0.0, 1.0) * 255.0
+    else:
+        colors = np.clip(colors, 0, 255)
+    colors = colors.astype(np.uint8)
+
+    if pcd.normals is None:
+        normals = np.zeros_like(points, dtype=np.float32)
+    else:
+        normals = np.asarray(pcd.normals, dtype=np.float32)
+        if normals.ndim != 2 or normals.shape[1] != 3 or normals.shape[0] != points.shape[0]:
+            raise ValueError(f"pcd.normals must have shape ({points.shape[0]}, 3), got: {normals.shape}")
+
+    dtype = [
+        ("x", "f4"), ("y", "f4"), ("z", "f4"),
+        ("nx", "f4"), ("ny", "f4"), ("nz", "f4"),
+        ("red", "u1"), ("green", "u1"), ("blue", "u1"),
+    ]
+    vertices = np.empty(points.shape[0], dtype=dtype)
+    vertices["x"] = points[:, 0]
+    vertices["y"] = points[:, 1]
+    vertices["z"] = points[:, 2]
+    vertices["nx"] = normals[:, 0]
+    vertices["ny"] = normals[:, 1]
+    vertices["nz"] = normals[:, 2]
+    vertices["red"] = colors[:, 0]
+    vertices["green"] = colors[:, 1]
+    vertices["blue"] = colors[:, 2]
+
+    PlyData([PlyElement.describe(vertices, "vertex")]).write(output_path)
+
+
 def load_pcdfile(pcd_filepath, scene_scale=1.0):
     if pcd_filepath.endswith(".bin"):
         xyzs, rgbs, _ = read_points3D_binary(pcd_filepath)

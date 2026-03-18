@@ -11,7 +11,7 @@ from munch import munchify
 from argparse import ArgumentParser
 from utils.config_utils import load_config
 from gaussian_splatting import create_renderer, create_pose_refiner
-from utils.utils import create_dataloader, infinite_dataloader, load_pcdfile, collate_single_view
+from utils.utils import create_dataloader, infinite_dataloader, load_pcdfile, save_pcdfile
 from utils.eval_utils import evaluate_gaussian_photometric
 from torch.utils.tensorboard import SummaryWriter
 from gaussian_splatting.gsplat.gaussian_model import GaussianModel
@@ -67,12 +67,13 @@ def optimize(train_dataset, eval_dataset, renderer, renderer_type, model_params,
     # gaussian model initialization
     gaussians = GaussianModel(sh_degree=model_params.sh_degree, device=device)
     pcd = load_pcdfile(pcd_filepath, scene_scale=model_params.get("scene_scale", 1.0))
+    # save_pcdfile(pcd, os.path.join(gaussian_output_dir, "initial_points3D.ply"))
+
     # Spatial unit scale for xyz learning-rate scaling and absgrad densify/prune thresholds.
     spatial_unit_scale = 5.0
     gaussians.create_from_pcd(pcd, spatial_unit_scale=spatial_unit_scale)
     gaussians.training_setup(training_params)
-
-    gauss
+    gaussians.save_ply(os.path.join(gaussian_output_dir, "gaussian_initial.ply"))   # NOTE: temp save for debug
 
     if pose_optimize:
         pose_updater_params = training_params.get("pose_updater_params", {})
@@ -274,7 +275,7 @@ def optimize(train_dataset, eval_dataset, renderer, renderer_type, model_params,
 
 if __name__ == "__main__":
     parser = ArgumentParser(description="Spatial block training script parameters")
-    parser.add_argument("--config", type=str, default="configs/gsplat/truck.yaml", help="Path to the configuration file")
+    parser.add_argument("--config", type=str, default="configs/gsplat/suburb.yaml", help="Path to the configuration file")
     args = parser.parse_args(sys.argv[1:])
     config = load_config(args.config)
 

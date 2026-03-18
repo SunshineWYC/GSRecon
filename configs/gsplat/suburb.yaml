@@ -1,11 +1,11 @@
 scene:
   data_path: "data/suburb"
   output_path: "results/gsplat/suburb/"
-  exp_name: "exp_debug"
+  exp_name: "exp_002"
   type: "colmap"
 
 training_params:
-  preload: True  # False:disk / True:cpu/cuda
+  preload: False  # False:disk / True:cpu/cuda
   preload_device: "cpu"  # "cuda:0" / "cpu"
   preload_dtype: "fp16"
   iterations: 30000
@@ -38,7 +38,7 @@ training_params:
     end_iter: 30000
 
   densification_params:
-    strategy: "absgrad" # "absgrad" / "mcmc"
+    strategy: "mcmc" # "absgrad" / "mcmc"
     densification_interval: 100
     densify_from_iter: 500
     densify_until_iter: 15000
@@ -48,7 +48,7 @@ training_params:
       opacity_reg: 0.01
       scale_reg: 0.01
       noise_lr: 5e5
-      new_gaussian_ratio: 1.03
+      new_gaussian_ratio: 1.02
     absgrad_params:
       densify_grad_threshold: 0.0004
 
@@ -56,7 +56,7 @@ renderer_params:
   renderer_type: "gsplat"
 
 model_params:
-  image_scale: 0.25
+  image_scale: 0.5
   scene_scale: 1.0
   sh_degree: 1
-  max_num_gaussians: 8_000_000
+  max_num_gaussians: 10_000_000
