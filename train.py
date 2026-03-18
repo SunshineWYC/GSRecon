@@ -67,9 +67,12 @@ def optimize(train_dataset, eval_dataset, renderer, renderer_type, model_params,
     # gaussian model initialization
     gaussians = GaussianModel(sh_degree=model_params.sh_degree, device=device)
     pcd = load_pcdfile(pcd_filepath, scene_scale=model_params.get("scene_scale", 1.0))
-    scene_extent = 20.0
-    gaussians.create_from_pcd(pcd, scene_extent=scene_extent)
+    # Spatial unit scale for xyz learning-rate scaling and absgrad densify/prune thresholds.
+    spatial_unit_scale = 5.0
+    gaussians.create_from_pcd(pcd, spatial_unit_scale=spatial_unit_scale)
     gaussians.training_setup(training_params)
+
+    gauss
 
     if pose_optimize:
         pose_updater_params = training_params.get("pose_updater_params", {})
@@ -156,7 +159,7 @@ def optimize(train_dataset, eval_dataset, renderer, renderer_type, model_params,
                         gaussians.densify_and_prune(
                             training_params.densification_params.absgrad_params.densify_grad_threshold,
                             training_params.densification_params.min_opacity,
-                            scene_extent,
+                            spatial_unit_scale,
                             size_threshold,)
                     if iteration % training_params.densification_params.opacity_reset_interval == 0:
                         gaussians.reset_opacity()
@@ -238,7 +241,7 @@ def optimize(train_dataset, eval_dataset, renderer, renderer_type, model_params,
 
     # save gaussian model
     t2 = time.perf_counter()
-    gaussians.save_ply(os.path.join(gaussian_output_dir, "iteration_{}.ply".format(iteration)))
+    gaussians.save_ply(os.path.join(gaussian_output_dir, "gaussian_{}.ply".format(iteration)))
     print("End optimization, final gaussian point number : {}.".format(gaussians.get_xyz.shape[0]))
 
     # final evaluation
@@ -271,7 +274,7 @@ def optimize(train_dataset, eval_dataset, renderer, renderer_type, model_params,
 
 if __name__ == "__main__":
     parser = ArgumentParser(description="Spatial block training script parameters")
-    parser.add_argument("--config", type=str, default="configs/gsplat/suburb.yaml", help="Path to the configuration file")
+    parser.add_argument("--config", type=str, default="configs/gsplat/truck.yaml", help="Path to the configuration file")
     args = parser.parse_args(sys.argv[1:])
     config = load_config(args.config)
 
