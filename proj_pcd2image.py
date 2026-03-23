@@ -151,7 +151,8 @@ def _depth_output_path(output_dirpath: Path, image_name: str) -> Path:
 
 def _project_depth_map(points_world: np.ndarray, image: ImageEntry, camera: Camera) -> np.ndarray:
     rotation = _qvec_to_rotmat(image.qvec)
-    points_cam = points_world @ rotation.T + image.tvec
+    # Here qvec/tvec are interpreted as camera-to-world, so invert them to get world-to-camera.
+    points_cam = (points_world - image.tvec) @ rotation
 
     z = points_cam[:, 2]
     valid = z > 0.0
