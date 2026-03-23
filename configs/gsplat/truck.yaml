@@ -1,7 +1,7 @@
 scene:
   data_path: "data/truck/"
   output_path: "results/gsplat/truck/"
-  exp_name: "exp_005"
+  exp_name: "exp_006"
   type: "colmap"
 
 training_params:
@@ -38,7 +38,7 @@ training_params:
     end_iter: 30000
 
   densification_params:
-    strategy: "absgrad" # "absgrad" / "mcmc"
+    strategy: "mcmc" # "absgrad" / "mcmc"
     densification_interval: 100
     densify_from_iter: 500
     densify_until_iter: 15000
@@ -56,7 +56,7 @@ renderer_params:
   renderer_type: "gsplat"
 
 model_params:
-  image_scale: 0.5
+  image_scale: 1.0
   scene_scale: 1.0
-  sh_degree: 3
+  sh_degree: 1
   max_num_gaussians: 2_000_000

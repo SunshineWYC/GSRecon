@@ -1,7 +1,7 @@
 scene:
-  data_path: "data/suburb"
-  output_path: "results/gsplat/suburb/"
-  exp_name: "exp_004"
+  data_path: "data/suburb_colmap"
+  output_path: "results/gsplat/suburb_colmap/"
+  exp_name: "exp_001"
   type: "colmap"
 
 training_params:
@@ -28,7 +28,7 @@ training_params:
   eval_split_interval: 50
   eval_interval: 4500
 
-  pose_optimize: True
+  pose_optimize: False
   pose_updater_params:
     init: "zero"
   pose_optimizer_params:

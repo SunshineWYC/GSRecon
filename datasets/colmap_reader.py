@@ -287,8 +287,8 @@ def read_colmap_bin_array(path):
     return np.transpose(array, (1, 0, 2)).squeeze()
 
 
-def read_colmap_model(scene_dirpath):
-    sparse_dir = os.path.join(scene_dirpath, "sparse/0")
+def read_colmap_model(scene_dirpath, sparse_subdir="sparse"):
+    sparse_dir = os.path.join(scene_dirpath, sparse_dir)
     try:
         cameras_extrinsic_file = os.path.join(sparse_dir, "images.bin")
         cameras_intrinsic_file = os.path.join(sparse_dir, "cameras.bin")

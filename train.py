@@ -70,7 +70,7 @@ def optimize(train_dataset, eval_dataset, renderer, renderer_type, model_params,
     # save_pcdfile(pcd, os.path.join(gaussian_output_dir, "initial_points3D.ply"))
 
     # Spatial unit scale for xyz learning-rate scaling and absgrad densify/prune thresholds.
-    spatial_unit_scale = 5.0
+    spatial_unit_scale = 5
     gaussians.create_from_pcd(pcd, spatial_unit_scale=spatial_unit_scale)
     gaussians.training_setup(training_params)
     gaussians.save_ply(os.path.join(gaussian_output_dir, "gaussian_initial.ply"))   # NOTE: temp save for debug
@@ -275,7 +275,7 @@ def optimize(train_dataset, eval_dataset, renderer, renderer_type, model_params,
 
 if __name__ == "__main__":
     parser = ArgumentParser(description="Spatial block training script parameters")
-    parser.add_argument("--config", type=str, default="configs/gsplat/suburb.yaml", help="Path to the configuration file")
+    parser.add_argument("--config", type=str, default="configs/gsplat/suburb_colmap.yaml", help="Path to the configuration file")
     args = parser.parse_args(sys.argv[1:])
     config = load_config(args.config)
 
@@ -335,8 +335,8 @@ if __name__ == "__main__":
     
     # save refined poses
     if training_params.get("pose_optimize", False) and refined_train_w2c:
-        images, cameras = read_colmap_model(config["scene"]["data_path"])
-        output_sparse_dir = os.path.join(output_root, "pose_refined", "sparse", "0")
+        images, cameras = read_colmap_model(config["scene"]["data_path"], sparse_subdir="sparse")
+        output_sparse_dir = os.path.join(output_root, "pose_refined", "sparse")
         write_colmap_text(output_sparse_dir, images, cameras, refined_train_w2c)
 
     print("Optimization Finished.")

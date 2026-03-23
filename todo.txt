@@ -1,0 +1,3 @@
+目前GSRecon中缺少的功能
+1. AE，这里需要考虑gsplat中已经集成的PPIPS
+2. 分离的sh优化设计，提高优化速度，几乎不会影响重建的质量，参考Taming-3DGS

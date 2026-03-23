@@ -17,18 +17,18 @@ class COLMAPSceneInfo:
     """
     Information about a COLMAP scene, initial data read from colmap format output without loading images.
     """
-    def __init__(self, scene_dirpath):
+    def __init__(self, scene_dirpath, sparse_subdir="sparse"):
         self.scene_dirpath = scene_dirpath
         assert os.path.exists(os.path.join(scene_dirpath, "sparse")), "sparse fold is not exist while the scene_type is colmap."
 
         try:
-            cameras_extrinsic_file = os.path.join(scene_dirpath, "sparse/0", "images.bin")
-            cameras_intrinsic_file = os.path.join(scene_dirpath, "sparse/0", "cameras.bin")
+            cameras_extrinsic_file = os.path.join(scene_dirpath, sparse_subdir, "images.bin")
+            cameras_intrinsic_file = os.path.join(scene_dirpath, sparse_subdir, "cameras.bin")
             cam_extrinsics = read_extrinsics_binary(cameras_extrinsic_file)
             cam_intrinsics = read_intrinsics_binary(cameras_intrinsic_file)
         except:
-            cameras_extrinsic_file = os.path.join(scene_dirpath, "sparse/0", "images.txt")
-            cameras_intrinsic_file = os.path.join(scene_dirpath, "sparse/0", "cameras.txt")
+            cameras_extrinsic_file = os.path.join(scene_dirpath, sparse_subdir, "images.txt")
+            cameras_intrinsic_file = os.path.join(scene_dirpath, sparse_subdir, "cameras.txt")
             cam_extrinsics = read_extrinsics_text(cameras_extrinsic_file)
             cam_intrinsics = read_intrinsics_text(cameras_intrinsic_file)
 
@@ -36,12 +36,12 @@ class COLMAPSceneInfo:
         self.views_info = self.load_views_info(cam_extrinsics, cam_intrinsics)
         self.view_ids = list(self.views_info.keys())
 
-        if os.path.exists(os.path.join(scene_dirpath, "sparse/0", "points3D.bin")):
-            self.pcd_filepath = os.path.join(scene_dirpath, "sparse/0", "points3D.bin")
-        elif os.path.exists(os.path.join(scene_dirpath, "sparse/0", "points3D.txt")):
-            self.pcd_filepath = os.path.join(scene_dirpath, "sparse/0", "points3D.txt")
-        elif os.path.exists(os.path.join(scene_dirpath, "sparse/0", "points3D.ply")):
-            self.pcd_filepath = os.path.join(scene_dirpath, "sparse/0", "points3D.ply")
+        if os.path.exists(os.path.join(scene_dirpath, sparse_subdir, "points3D.bin")):
+            self.pcd_filepath = os.path.join(scene_dirpath, sparse_subdir, "points3D.bin")
+        elif os.path.exists(os.path.join(scene_dirpath, sparse_subdir, "points3D.txt")):
+            self.pcd_filepath = os.path.join(scene_dirpath, sparse_subdir, "points3D.txt")
+        elif os.path.exists(os.path.join(scene_dirpath, sparse_subdir, "points3D.ply")):
+            self.pcd_filepath = os.path.join(scene_dirpath, sparse_subdir, "points3D.ply")
         else:
             self.pcd_filepath = None
 
